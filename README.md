@@ -16,7 +16,7 @@ Tested on Brave (Chromium Browser) and Firefox.
 - ability to export and import progress
 - track your projects, even complex ones, easily
 - auto-expand rows written like "Round 1-10:"
-- add information (for example "Head:" or "White:") to the pattern 
+- add information (for example "Head:" or "body:" or...) to the pattern 
 - add colors to stitches
 - use US/UK/ES/... terminology for stitches (to work with Chinese some change should be made to the parser)
 
@@ -26,7 +26,7 @@ You can do anything you want with this code, but you cannot use it for commercia
 
 
 # project
-## new features: add notes, change theme
+## new features: project notes, change theme
 add notes (and edit them)
 With syntax `R1: 8sc # note`
 
@@ -35,7 +35,7 @@ Or inside the tracker
 Themes
 Use the upper right toggle
 
-## new project
+## new project wip
 ### basics
 The basic usage consists in selecting a name and pasting a pattern (see syntax)
 
