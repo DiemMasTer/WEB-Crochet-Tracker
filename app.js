@@ -177,7 +177,8 @@ function splitTopLevel(str) {
     for (let i = 0; i < str.length; i++) {
         let char = str[i];
         if (char === '(' || char === '[' || char === '{' || char === '<') depth++;
-        else if (char === ')' || char === ']' || char === '}' || char === '>') Math.max(0, depth--);
+        // FIXED: Replaced Math.max(0, depth--) which evaluated in the wrong order
+        else if (char === ')' || char === ']' || char === '}' || char === '>') depth = Math.max(0, depth - 1);
 
         if (char === ',' && depth === 0) {
             result.push(current.trim());
@@ -207,14 +208,14 @@ function parsePart(str, inheritedColor = null) {
         str = colorMatch[2].trim();
     }
 
-    // UPDATED: Now supports (...) AND [...] formats perfectly!
-    let groupMatch = str.match(/^(?:\(|\[)([\s\S]*)(?:\)|\])\s*(?:\*|x|X)\s*(\d+)$/i);
+    // UPDATED: Now universally supports (), [], AND {} combinations safely!
+    let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X)\s*(\d+)$/i);
     if (groupMatch) {
         return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     }
     
     // UPDATED: Now supports grouping without multi like [5sc, inc] 
-    let groupMatchNoMulti = str.match(/^(?:\(|\[)([\s\S]*)(?:\)|\])$/i);
+    let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
     if (groupMatchNoMulti) {
         return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
     }
@@ -321,8 +322,8 @@ function processPatternIntoRows(patternText) {
 
         cleanLine = line.replace(/^\s*((?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
         
-        // Strip trailing brackets/parentheses for stitch totals (e.g., [16], (16), [ 16 sts ])
-        cleanLine = cleanLine.replace(/\s*[\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)]\s*$/i, '');
+        // Strip trailing brackets/parentheses for stitch totals (e.g., [16], (16), {16}, [ 16 sts ])
+        cleanLine = cleanLine.replace(/\s*[\[\(\{]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)\}]\s*$/i, '');
         
         cleanLine = distributeColorTags(cleanLine);
 
