@@ -179,11 +179,19 @@ function parsePart(str, inheritedColor = null) {
         max = parseInt(multiMatch[2], 10);
         text = multiMatch[1].trim();
     } else {
+        // Matches counts at the start (e.g. "4 sc")
         let startMatch = text.match(/^(\d+)\s*(.*)$/);
         if (startMatch) {
             max = parseInt(startMatch[1], 10);
             text = startMatch[2].trim();
             if (!text) text = "st";
+        } else {
+            // NEW: Matches counts at the end separated by space (e.g. "sc 4", "inc 2")
+            let endMatch = text.match(/^(.*?)\s+(\d+)$/);
+            if (endMatch) {
+                max = parseInt(endMatch[2], 10);
+                text = endMatch[1].trim();
+            }
         }
     }
 
@@ -244,6 +252,7 @@ function processPatternIntoRows(patternText) {
         }
 
         cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d+[.:-]?\s*|\d+[.:-]+\s*)/i, '');
+        // Strip trailing brackets/parentheses for stitch totals (e.g., "[14]" or "(14)")
         cleanLine = cleanLine.replace(/\s*[\[\(]\d+[\]\)]\s*$/, '');
         cleanLine = distributeColorTags(cleanLine);
 
