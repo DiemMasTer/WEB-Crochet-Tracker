@@ -27,6 +27,13 @@ You can do anything you want with this code, but you cannot use it for commercia
 
 # project
 ## new features: add notes, change theme
+add notes (and edit them)
+With syntax R1: 8sc # note
+Or inside the tracker
+
+Themes
+Use the upper right toggle
+
 ## new project
 ### basics
 The basic usage consists in selecting a name and pasting a pattern (see syntax)
