@@ -34,12 +34,20 @@ function closeModal(id) {
     document.getElementById(id).style.display = 'none';
 }
 
-// Backup & Migration to ensure nested structure works with old saves
+// Backup & Migration to ensure structure works with old saves
 let needsSave = false;
 
 function migrateProject(proj) {
     let changed = false;
+    
+    // Migrate Project Notes
+    if (proj.notes === undefined) { proj.notes = ""; changed = true; }
+
     proj.rows.forEach(r => {
+        // Migrate Row Notes
+        if (r.rowNote === undefined) { r.rowNote = ""; changed = true; }
+        if (r.sourceLineIndex === undefined) { r.sourceLineIndex = -1; changed = true; }
+
         if (!r.nodes && r.segments) {
             changed = true;
             let convertSegment = (s, customCurrent = null) => {
@@ -154,7 +162,6 @@ function parsePart(str, inheritedColor = null) {
         str = colorMatch[2].trim();
     }
 
-    // Match Group multipliers i.e., (sc, inc) * 7
     let groupMatch = str.match(/^\(([\s\S]*)\)\s*(?:\*|x|X)\s*(\d+)$/i);
     if (groupMatch) {
         return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
@@ -164,7 +171,6 @@ function parsePart(str, inheritedColor = null) {
         return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
     }
 
-    // Match standard steps
     let max = 1;
     let text = str;
 
@@ -190,12 +196,13 @@ function parseSequence(str, inheritedColor = null) {
 }
 
 function processPatternIntoRows(patternText) {
-    let rawLines = patternText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    let rawLines = patternText.split('\n');
     let expandedLines = [];
 
     const rangeRegex = /^(R|Row|Rows|Rnd|Rnds|Round|Rounds)?\s*(\d+)\s*-\s*(?:R|Row|Rows|Rnd|Rnds|Round|Rounds)?\s*(\d+)[\s.:-]+(.+)$/i;
 
-    rawLines.forEach(line => {
+    rawLines.forEach((line, idx) => {
+        if (line.trim().length === 0) return;
         let match = line.match(rangeRegex);
         if (match) {
             let prefixStr = match[1] || 'R';
@@ -207,34 +214,47 @@ function processPatternIntoRows(patternText) {
             let end = parseInt(match[3], 10);
 
             if (start <= end) {
-                for (let i = start; i <= end; i++) expandedLines.push(`${prefixStr}${space}${i}: ${match[4].trim()}`);
+                for (let i = start; i <= end; i++) expandedLines.push({ text: `${prefixStr}${space}${i}: ${match[4].trim()}`, sourceLineIndex: idx });
             } else {
-                for (let i = start; i >= end; i--) expandedLines.push(`${prefixStr}${space}${i}: ${match[4].trim()}`);
+                for (let i = start; i >= end; i--) expandedLines.push({ text: `${prefixStr}${space}${i}: ${match[4].trim()}`, sourceLineIndex: idx });
             }
         } else {
-            expandedLines.push(line);
+            expandedLines.push({ text: line, sourceLineIndex: idx });
         }
     });
 
     let currentBlockNote = null;
     let finalRows = [];
 
-    expandedLines.forEach(line => {
-        if (!/\d/.test(line.replace(/<.*?>/g, ''))) {
-            currentBlockNote = line.replace(/<.*?>/g, '').trim();
+    expandedLines.forEach(item => {
+        let line = item.text;
+        let cleanLine = line.replace(/<.*?>/g, '').trim();
+
+        if (!/\d/.test(cleanLine)) {
+            currentBlockNote = cleanLine;
             return;
         }
 
-        let cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d+[.:-]?\s*|\d+[.:-]+\s*)/i, '');
+        // Extract Inline Row Note (#)
+        let rowNote = "";
+        let hashIdx = line.indexOf('#');
+        if (hashIdx !== -1) {
+            rowNote = line.substring(hashIdx + 1).trim();
+            line = line.substring(0, hashIdx).trim(); 
+        }
+
+        cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d+[.:-]?\s*|\d+[.:-]+\s*)/i, '');
         cleanLine = cleanLine.replace(/\s*[\[\(]\d+[\]\)]\s*$/, '');
         cleanLine = distributeColorTags(cleanLine);
 
         let nodes = parseSequence(cleanLine);
 
         finalRows.push({
-            originalText: line,
+            originalText: line, 
             nodes: nodes,
-            blockNote: currentBlockNote
+            blockNote: currentBlockNote,
+            rowNote: rowNote,
+            sourceLineIndex: item.sourceLineIndex
         });
     });
 
@@ -334,12 +354,22 @@ function showView(viewId) {
 
 function createProject() {
     let name = document.getElementById('new-proj-name').value;
+    let notes = document.getElementById('new-proj-notes').value;
     let pattern = document.getElementById('new-proj-pattern').value;
     if (!name || !pattern) return alert("Please enter a name and pattern.");
-    let newProject = { id: Date.now(), name: name, patternText: pattern, rows: processPatternIntoRows(pattern) };
+    
+    let newProject = { 
+        id: Date.now(), 
+        name: name, 
+        notes: notes,
+        patternText: pattern, 
+        rows: processPatternIntoRows(pattern) 
+    };
     projects.push(newProject);
     saveData();
+    
     document.getElementById('new-proj-name').value = '';
+    document.getElementById('new-proj-notes').value = '';
     document.getElementById('new-proj-pattern').value = '';
     renderProjectList();
 }
@@ -364,6 +394,7 @@ function openProject(id) {
     currentProjectId = id;
     let proj = projects.find(p => p.id === id);
     document.getElementById('edit-proj-name').value = proj.name;
+    document.getElementById('edit-proj-notes').value = proj.notes || "";
     document.getElementById('edit-proj-pattern').value = proj.patternText;
     renderRowList(proj);
     showView('project-view');
@@ -372,10 +403,12 @@ function openProject(id) {
 function updateProject() {
     let proj = projects.find(p => p.id === currentProjectId);
     let newName = document.getElementById('edit-proj-name').value;
+    let newNotes = document.getElementById('edit-proj-notes').value;
     let newPatternText = document.getElementById('edit-proj-pattern').value;
     if (!newName || !newPatternText) return alert("Please enter a name and pattern.");
 
     proj.name = newName;
+    proj.notes = newNotes;
     proj.patternText = newPatternText;
 
     let newRows = processPatternIntoRows(newPatternText);
@@ -466,6 +499,64 @@ function isNodeDone(node) {
 
 function checkNodesDone(nodes) {
     return nodes.every(isNodeDone);
+}
+
+// --- Tracking Notes Edit ---
+let isNoteVisible = true;
+
+function toggleTrackerNote() {
+    isNoteVisible = !isNoteVisible;
+    let noteInput = document.getElementById('tracker-row-note-input');
+    let eyeBtn = document.getElementById('eye-icon');
+
+    if(isNoteVisible) {
+        noteInput.style.display = 'block';
+        eyeBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+    } else {
+        noteInput.style.display = 'none';
+        eyeBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+    }
+}
+
+function saveRowNoteFromUI() {
+    let noteInput = document.getElementById('tracker-row-note-input');
+    // Replace newlines to keep text file safely line-by-line formatted.
+    let newNote = noteInput.value.replace(/\n/g, ' ');
+
+    let proj = projects.find(p => p.id === currentProjectId);
+    let row = proj.rows[currentRowIndex];
+
+    if(row.rowNote === newNote) return; // Note didn't change
+
+    row.rowNote = newNote;
+
+    // Magically update the original raw pattern string
+    let lines = proj.patternText.split('\n');
+    let sourceIdx = row.sourceLineIndex;
+
+    if(sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
+        let line = lines[sourceIdx];
+        let hashIdx = line.indexOf('#');
+        if(hashIdx !== -1) {
+            line = line.substring(0, hashIdx);
+        }
+        if(newNote.trim().length > 0) {
+            line = line.trimRight() + " # " + newNote.trim();
+        } else {
+            line = line.trimRight(); // Removed the note entirely
+        }
+        lines[sourceIdx] = line;
+        proj.patternText = lines.join('\n');
+    }
+
+    // Since Ranges (e.g. Row 1-3) share the same source index, reflect update
+    proj.rows.forEach(r => {
+        if(r.sourceLineIndex === sourceIdx) {
+            r.rowNote = newNote;
+        }
+    });
+
+    saveData();
 }
 
 // --- Rendering Helpers ---
@@ -587,6 +678,13 @@ function refreshTrackerUI() {
         noteContainer.style.display = 'inline-block';
     } else {
         noteContainer.style.display = 'none';
+    }
+
+    // Refresh row tracking note
+    let noteInput = document.getElementById('tracker-row-note-input');
+    if(noteInput) {
+        noteInput.value = row.rowNote || "";
+        noteInput.style.display = isNoteVisible ? 'block' : 'none';
     }
 
     document.getElementById('segments-container').innerHTML = renderNodesHtml(row.nodes);
