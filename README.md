@@ -10,7 +10,7 @@ Tested on Brave (Chromium Browser) and Firefox.
 
 # features overview 
 - ⚡NEW: ADD NOTES!
-- ⚡two themes (upper right toggle): "tw" and "grey scale"
+- ⚡two themes (upper right toggle): "midnight" and "grey scale"
 - multiple projects, edit them, delete them
 - auto saving in your browser
 - ability to export and import progress
