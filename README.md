@@ -9,7 +9,8 @@ It was written with the aid of AI.
 Tested on Brave (Chromium Browser) and Firefox.
 
 # features overview 
-- add multiple projects, edit them, delete them
+- two themes (upper right toggle): "midnight" and "grey scale"
+- multiple projects, edit them, delete them
 - auto saving in your browser
 - ability to export and import progress
 - track your projects, even complex ones, easily
