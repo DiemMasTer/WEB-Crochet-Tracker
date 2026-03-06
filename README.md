@@ -2,18 +2,26 @@
 
 Welcome to the WEB Crochet Tracker.
 
-This is a simple tool that shouldn't raise safety concerns.
+This is a simple tool that shouldn't raise safety concerns as it saves progress in YOUR browser
 
 It was written with the aid of AI.
 
 Tested on Brave (Chromium Browser) and Firefox.
 
+# features overview 
+- add multiple projects, edit them, delete them
+- auto saving in your browser
+- ability to export and import progress
+- track your projects, even complex ones, easily
+- auto-expand rows written like "Round 1-10:"
+- add information (for example "Head:" or "White:") to the pattern 
+- add colors to stitches
+- use US/UK/ES/... terminology for stitches (to work with Chinese some change should be made to the parser)
+
+
 # licence 
 You can do anything you want with this code, but you cannot use it for commercial purposes.
 
-Data is stored in your browser, so you can come back to your project.
-
-There is ability to export and import 
 
 # usage
 ## new project
