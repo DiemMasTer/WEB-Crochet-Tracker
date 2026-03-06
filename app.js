@@ -207,11 +207,14 @@ function parsePart(str, inheritedColor = null) {
         str = colorMatch[2].trim();
     }
 
-    let groupMatch = str.match(/^\(([\s\S]*)\)\s*(?:\*|x|X)\s*(\d+)$/i);
+    // UPDATED: Now supports (...) AND [...] formats perfectly!
+    let groupMatch = str.match(/^(?:\(|\[)([\s\S]*)(?:\)|\])\s*(?:\*|x|X)\s*(\d+)$/i);
     if (groupMatch) {
         return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     }
-    let groupMatchNoMulti = str.match(/^\(([\s\S]*)\)$/i);
+    
+    // UPDATED: Now supports grouping without multi like [5sc, inc] 
+    let groupMatchNoMulti = str.match(/^(?:\(|\[)([\s\S]*)(?:\)|\])$/i);
     if (groupMatchNoMulti) {
         return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
     }
@@ -256,7 +259,6 @@ function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n');
     let expandedLines = [];
 
-    // FIXED: Longest to shortest, plus \s* to protect against leading spaces
     const rangeRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)\s*-\s*(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)[\s.:-]+(.+)$/i;
 
     rawLines.forEach((line, idx) => {
@@ -317,9 +319,11 @@ function processPatternIntoRows(patternText) {
         if (rowPrefix.endsWith('s')) rowPrefix = rowPrefix.slice(0, -1);
         if (rowPrefix === 'R') rowPrefix = 'Row'; 
 
-        // FIXED: Safely strip the starting prefix. Uses ^\s* to ignore invisible spaces!
         cleanLine = line.replace(/^\s*((?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
-        cleanLine = cleanLine.replace(/\s*[\[\(]\d+[\]\)]\s*$/, '');
+        
+        // Strip trailing brackets/parentheses for stitch totals (e.g., [16], (16), [ 16 sts ])
+        cleanLine = cleanLine.replace(/\s*[\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)]\s*$/i, '');
+        
         cleanLine = distributeColorTags(cleanLine);
 
         let nodes = parseSequence(cleanLine);
@@ -490,7 +494,6 @@ function updateProject() {
 
     let newRows = processPatternIntoRows(newPatternText);
 
-    // FIXED: Instead of strictly preserving the old broken nodes, transfer progress carefully.
     newRows.forEach((newRow, rIdx) => {
         let oldRow = proj.rows[rIdx];
         if (oldRow && oldRow.originalText === newRow.originalText) {
