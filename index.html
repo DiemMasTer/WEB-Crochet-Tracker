@@ -37,9 +37,9 @@
     </div>
 
     <div id="project-view" class="view">
-        <div class="header-row">
-            <button onclick="showView('home-view')">← Back</button>
-            <h2>Edit Project</h2>
+        <div class="header-row" style="position: relative; justify-content: center; min-height: 40px; margin-bottom: 15px;">
+            <button onclick="showView('home-view')" style="position: absolute; left: 0;">← Back</button>
+            <h2 style="font-size: 20px; margin: 0;">Edit Project</h2>
         </div>
         
         <div class="form-group">
@@ -65,19 +65,20 @@
     </div>
 
     <div id="tracker-view" class="view">
-        <div class="header-row">
-            <button onclick="openProject(currentProjectId)">← Back</button>
-            <span>Tracker</span>
-            <div style="width: 70px;"></div>
+        <div class="header-row" style="position: relative; justify-content: center; min-height: 40px; margin-bottom: 15px;">
+            <button onclick="openProject(currentProjectId)" style="position: absolute; left: 0;">← Back</button>
+            <h2 style="font-size: 20px; margin: 0;">Tracker</h2>
         </div>
 
-        <div class="header-row" style="justify-content: center; gap: 20px;">
+        <!-- MOVED: Block note is now above the row navigation and styled larger -->
+        <div id="track-block-note" class="block-note-badge" style="font-size: 18px; padding: 10px 30px; border-radius: 30px; margin-bottom: 15px; border-width: 2px;"></div>
+
+        <div class="header-row" style="justify-content: center; gap: 20px; margin-bottom: 15px;">
             <button class="nav-btn" onclick="navigateRow(-1)">❮</button>
-            <h2 id="track-row-name">Row 3</h2>
+            <h2 id="track-row-name" style="margin: 0; min-width: 100px; text-align: center;">Row 1</h2>
             <button class="nav-btn" onclick="navigateRow(1)">❯</button>
         </div>
 
-        <div id="track-block-note" class="block-note-badge"></div>
         <div class="pattern-display" id="track-pattern-text"></div>
         <div id="segments-container"></div>
 

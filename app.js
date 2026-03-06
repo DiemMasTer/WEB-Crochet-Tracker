@@ -1,3 +1,5 @@
+// --- START OF FILE app.js ---
+
 // --- Theme Management ---
 function loadTheme() {
     let saved = localStorage.getItem('crochetTheme') || 'midnight';
@@ -43,10 +45,25 @@ function migrateProject(proj) {
     // Migrate Project Notes
     if (proj.notes === undefined) { proj.notes = ""; changed = true; }
 
+    let currentBlock = null;
+    let displayIdx = 0;
+
     proj.rows.forEach(r => {
         // Migrate Row Notes
         if (r.rowNote === undefined) { r.rowNote = ""; changed = true; }
         if (r.sourceLineIndex === undefined) { r.sourceLineIndex = -1; changed = true; }
+
+        // Track & Reset display row number upon block note changes
+        if (r.blockNote !== currentBlock) {
+            currentBlock = r.blockNote;
+            displayIdx = 0;
+        }
+        displayIdx++;
+
+        if (r.displayIndex !== displayIdx) {
+            r.displayIndex = displayIdx;
+            changed = true;
+        }
 
         if (!r.nodes && r.segments) {
             changed = true;
@@ -179,14 +196,12 @@ function parsePart(str, inheritedColor = null) {
         max = parseInt(multiMatch[2], 10);
         text = multiMatch[1].trim();
     } else {
-        // Matches counts at the start (e.g. "4 sc")
         let startMatch = text.match(/^(\d+)\s*(.*)$/);
         if (startMatch) {
             max = parseInt(startMatch[1], 10);
             text = startMatch[2].trim();
             if (!text) text = "st";
         } else {
-            // NEW: Matches counts at the end separated by space (e.g. "sc 4", "inc 2")
             let endMatch = text.match(/^(.*?)\s+(\d+)$/);
             if (endMatch) {
                 max = parseInt(endMatch[2], 10);
@@ -232,6 +247,7 @@ function processPatternIntoRows(patternText) {
     });
 
     let currentBlockNote = null;
+    let currentDisplayIndex = 0;
     let finalRows = [];
 
     expandedLines.forEach(item => {
@@ -239,9 +255,16 @@ function processPatternIntoRows(patternText) {
         let cleanLine = line.replace(/<.*?>/g, '').trim();
 
         if (!/\d/.test(cleanLine)) {
-            currentBlockNote = cleanLine;
+            let newNote = cleanLine;
+            // Reset row tracking when a new Block Note section is reached
+            if (newNote !== currentBlockNote) {
+                currentBlockNote = newNote;
+                currentDisplayIndex = 0;
+            }
             return;
         }
+
+        currentDisplayIndex++;
 
         // Extract Inline Row Note (#)
         let rowNote = "";
@@ -263,7 +286,8 @@ function processPatternIntoRows(patternText) {
             nodes: nodes,
             blockNote: currentBlockNote,
             rowNote: rowNote,
-            sourceLineIndex: item.sourceLineIndex
+            sourceLineIndex: item.sourceLineIndex,
+            displayIndex: currentDisplayIndex
         });
     });
 
@@ -678,7 +702,10 @@ function refreshTrackerUI() {
     let proj = projects.find(p => p.id === currentProjectId);
     let row = proj.rows[currentRowIndex];
 
-    document.getElementById('track-row-name').innerText = `Row ${currentRowIndex + 1}`;
+    // Read calculated display index, fallback to absolute index just in case
+    let displayNum = row.displayIndex !== undefined ? row.displayIndex : (currentRowIndex + 1);
+    document.getElementById('track-row-name').innerText = `Row ${displayNum}`;
+
     document.getElementById('track-pattern-text').innerText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
 
     let noteContainer = document.getElementById('track-block-note');
