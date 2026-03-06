@@ -9,7 +9,8 @@ It was written with the aid of AI.
 Tested on Brave (Chromium Browser) and Firefox.
 
 # features overview 
-- two themes (upper right toggle): "midnight" and "grey scale"
+- ⚡NEW: ADD NOTES!
+- ⚡two themes (upper right toggle): "tw" and "grey scale"
 - multiple projects, edit them, delete them
 - auto saving in your browser
 - ability to export and import progress
@@ -24,7 +25,8 @@ Tested on Brave (Chromium Browser) and Firefox.
 You can do anything you want with this code, but you cannot use it for commercial purposes.
 
 
-# usage
+# project
+## new features: add notes, change theme
 ## new project
 ### basics
 The basic usage consists in selecting a name and pasting a pattern (see syntax)
