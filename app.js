@@ -65,6 +65,20 @@ function migrateProject(proj) {
             changed = true;
         }
 
+        // Add correct Prefix (Rnd, Round, R, Row) for older saves
+        if (!r.rowPrefix) {
+            let pm = (r.originalText || "").match(/^(R|Row|Rows|Rnd|Rnds|Round|Rounds)/i);
+            let pfx = pm ? pm[1] : 'Row';
+            pfx = pfx.charAt(0).toUpperCase() + pfx.slice(1).toLowerCase();
+            if (pfx.endsWith('s')) pfx = pfx.slice(0, -1);
+            if (pfx === 'R') pfx = 'Row'; // Normalize 'R' to 'Row'
+            r.rowPrefix = pfx;
+            changed = true;
+        } else if (r.rowPrefix === 'R') {
+            r.rowPrefix = 'Row';
+            changed = true;
+        }
+
         if (!r.nodes && r.segments) {
             changed = true;
             let convertSegment = (s, customCurrent = null) => {
@@ -231,8 +245,9 @@ function processPatternIntoRows(patternText) {
             let prefixStr = match[1] || 'R';
             prefixStr = prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase();
             if (prefixStr.endsWith('s')) prefixStr = prefixStr.slice(0, -1);
+            if (prefixStr === 'R') prefixStr = 'Row'; // Normalize 'R' to 'Row' in ranges
 
-            let space = prefixStr === 'R' ? '' : '';
+            let space = ' '; // Ensure correct spacing like "Row 1" instead of "Row1"
             let start = parseInt(match[2], 10);
             let end = parseInt(match[3], 10);
 
@@ -254,7 +269,12 @@ function processPatternIntoRows(patternText) {
         let line = item.text;
         let cleanLine = line.replace(/<.*?>/g, '').trim();
 
-        if (!/\d/.test(cleanLine)) {
+        // Improved block note detection 
+        // Handles if they typed "R: sc" (no number, just a prefix)
+        let rowPrefixRegex = /^(R|Row|Rows|Rnd|Rnds|Round|Rounds)(?:[\s\d.:-]|$)/i;
+        let hasDigits = /\d/.test(cleanLine);
+
+        if (!hasDigits && !rowPrefixRegex.test(cleanLine)) {
             let newNote = cleanLine;
             // Reset row tracking when a new Block Note section is reached
             if (newNote !== currentBlockNote) {
@@ -274,7 +294,15 @@ function processPatternIntoRows(patternText) {
             line = line.substring(0, hashIdx).trim(); 
         }
 
-        cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d+[.:-]?\s*|\d+[.:-]+\s*)/i, '');
+        // Detect Prefix text (Rnd, Round, R, Row) for visual display
+        let pm = line.match(/^(R|Row|Rows|Rnd|Rnds|Round|Rounds)/i);
+        let rowPrefix = pm ? pm[1] : 'Row';
+        rowPrefix = rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase();
+        if (rowPrefix.endsWith('s')) rowPrefix = rowPrefix.slice(0, -1);
+        if (rowPrefix === 'R') rowPrefix = 'Row'; // Normalize 'R' to 'Row'
+
+        // Safely strip the starting prefix and/or numbers (supports 0 digits, e.g. "R: ")
+        cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
         // Strip trailing brackets/parentheses for stitch totals (e.g., "[14]" or "(14)")
         cleanLine = cleanLine.replace(/\s*[\[\(]\d+[\]\)]\s*$/, '');
         cleanLine = distributeColorTags(cleanLine);
@@ -287,7 +315,8 @@ function processPatternIntoRows(patternText) {
             blockNote: currentBlockNote,
             rowNote: rowNote,
             sourceLineIndex: item.sourceLineIndex,
-            displayIndex: currentDisplayIndex
+            displayIndex: currentDisplayIndex,
+            rowPrefix: rowPrefix
         });
     });
 
@@ -704,7 +733,12 @@ function refreshTrackerUI() {
 
     // Read calculated display index, fallback to absolute index just in case
     let displayNum = row.displayIndex !== undefined ? row.displayIndex : (currentRowIndex + 1);
-    document.getElementById('track-row-name').innerText = `Row ${displayNum}`;
+    
+    // Check fallback and enforce normalization to "Row" right before UI render
+    let prefix = row.rowPrefix || 'Row';
+    if (prefix === 'R') prefix = 'Row';
+
+    document.getElementById('track-row-name').innerText = `${prefix} ${displayNum}`;
 
     document.getElementById('track-pattern-text').innerText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
 
