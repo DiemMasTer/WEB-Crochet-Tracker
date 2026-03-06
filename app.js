@@ -36,6 +36,22 @@ function closeModal(id) {
     document.getElementById(id).style.display = 'none';
 }
 
+// Helper: Safely transfers stitch counts to newly parsed nodes so progress isn't lost during updates/bugfixes
+function transferProgress(oldNodes, newNodes) {
+    if (!oldNodes || !newNodes || oldNodes.length !== newNodes.length) return;
+    for (let i = 0; i < newNodes.length; i++) {
+        let o = oldNodes[i];
+        let n = newNodes[i];
+        if (o.type === n.type && o.max === n.max) {
+            n.current = o.current || 0;
+            if (n.type === 'group') {
+                if (o.history) n.history = JSON.parse(JSON.stringify(o.history));
+                if (o.nodes && n.nodes) transferProgress(o.nodes, n.nodes);
+            }
+        }
+    }
+}
+
 // Backup & Migration to ensure structure works with old saves
 let needsSave = false;
 
@@ -45,40 +61,8 @@ function migrateProject(proj) {
     // Migrate Project Notes
     if (proj.notes === undefined) { proj.notes = ""; changed = true; }
 
-    let currentBlock = null;
-    let displayIdx = 0;
-
+    // 1. First, handle legacy v1 projects (segments -> nodes)
     proj.rows.forEach(r => {
-        // Migrate Row Notes
-        if (r.rowNote === undefined) { r.rowNote = ""; changed = true; }
-        if (r.sourceLineIndex === undefined) { r.sourceLineIndex = -1; changed = true; }
-
-        // Track & Reset display row number upon block note changes
-        if (r.blockNote !== currentBlock) {
-            currentBlock = r.blockNote;
-            displayIdx = 0;
-        }
-        displayIdx++;
-
-        if (r.displayIndex !== displayIdx) {
-            r.displayIndex = displayIdx;
-            changed = true;
-        }
-
-        // Add correct Prefix (Rnd, Round, R, Row) for older saves
-        if (!r.rowPrefix) {
-            let pm = (r.originalText || "").match(/^(R|Row|Rows|Rnd|Rnds|Round|Rounds)/i);
-            let pfx = pm ? pm[1] : 'Row';
-            pfx = pfx.charAt(0).toUpperCase() + pfx.slice(1).toLowerCase();
-            if (pfx.endsWith('s')) pfx = pfx.slice(0, -1);
-            if (pfx === 'R') pfx = 'Row'; // Normalize 'R' to 'Row'
-            r.rowPrefix = pfx;
-            changed = true;
-        } else if (r.rowPrefix === 'R') {
-            r.rowPrefix = 'Row';
-            changed = true;
-        }
-
         if (!r.nodes && r.segments) {
             changed = true;
             let convertSegment = (s, customCurrent = null) => {
@@ -88,15 +72,23 @@ function migrateProject(proj) {
                 if (startMatch && parseInt(startMatch[1], 10) === max) {
                     text = startMatch[2].trim();
                     if (!text) text = "st";
+                } else {
+                    let endMatch = text.match(/^(.*?)\s+(\d+)$/);
+                    if (endMatch && parseInt(endMatch[2], 10) === max) {
+                        text = endMatch[1].trim();
+                    } else {
+                        let endMatchAttached = text.match(/^(.*?[a-zA-Z])(\d+)$/);
+                        if (endMatchAttached && parseInt(endMatchAttached[2], 10) === max) {
+                            text = endMatchAttached[1].trim();
+                        }
+                    }
                 }
                 return { type: 'step', max: max, current: customCurrent !== null ? customCurrent : s.current, text: text, color: s.color };
             };
 
             let nodes = r.segments.map(s => convertSegment(s));
             if (r.groupMax > 1) {
-                let groupNode = {
-                    type: 'group', max: r.groupMax, current: Math.max(1, r.groupCurrent || 1), nodes: nodes, history: {}
-                };
+                let groupNode = { type: 'group', max: r.groupMax, current: Math.max(1, r.groupCurrent || 1), nodes: nodes, history: {} };
                 if (r.segmentHistory) {
                     for (let k in r.segmentHistory) {
                         groupNode.history[k] = r.segments.map((s, i) => convertSegment(s, r.segmentHistory[k][i]));
@@ -108,6 +100,28 @@ function migrateProject(proj) {
             }
         }
     });
+
+    // 2. Now force a rebuild of rows from patternText to apply any parser bugfixes
+    if (proj.patternText) {
+        let freshRows = processPatternIntoRows(proj.patternText);
+        
+        freshRows.forEach((fRow, rIdx) => {
+            let oRow = proj.rows[rIdx];
+            if (oRow) {
+                // Restore any notes
+                fRow.rowNote = oRow.rowNote || fRow.rowNote;
+                // Transfer progress safely
+                transferProgress(oRow.nodes, fRow.nodes);
+            }
+        });
+
+        // If structure or text changed because of parser fixes, update the project internally
+        if (JSON.stringify(proj.rows) !== JSON.stringify(freshRows)) {
+            proj.rows = freshRows;
+            changed = true;
+        }
+    }
+
     return changed;
 }
 
@@ -220,6 +234,12 @@ function parsePart(str, inheritedColor = null) {
             if (endMatch) {
                 max = parseInt(endMatch[2], 10);
                 text = endMatch[1].trim();
+            } else {
+                let endMatchAttached = text.match(/^(.*?[a-zA-Z])(\d+)$/);
+                if (endMatchAttached) {
+                    max = parseInt(endMatchAttached[2], 10);
+                    text = endMatchAttached[1].trim();
+                }
             }
         }
     }
@@ -236,7 +256,8 @@ function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n');
     let expandedLines = [];
 
-    const rangeRegex = /^(R|Row|Rows|Rnd|Rnds|Round|Rounds)?\s*(\d+)\s*-\s*(?:R|Row|Rows|Rnd|Rnds|Round|Rounds)?\s*(\d+)[\s.:-]+(.+)$/i;
+    // FIXED: Longest to shortest, plus \s* to protect against leading spaces
+    const rangeRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)\s*-\s*(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)[\s.:-]+(.+)$/i;
 
     rawLines.forEach((line, idx) => {
         if (line.trim().length === 0) return;
@@ -245,9 +266,9 @@ function processPatternIntoRows(patternText) {
             let prefixStr = match[1] || 'R';
             prefixStr = prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase();
             if (prefixStr.endsWith('s')) prefixStr = prefixStr.slice(0, -1);
-            if (prefixStr === 'R') prefixStr = 'Row'; // Normalize 'R' to 'Row' in ranges
+            if (prefixStr === 'R') prefixStr = 'Row'; 
 
-            let space = ' '; // Ensure correct spacing like "Row 1" instead of "Row1"
+            let space = ' '; 
             let start = parseInt(match[2], 10);
             let end = parseInt(match[3], 10);
 
@@ -269,14 +290,11 @@ function processPatternIntoRows(patternText) {
         let line = item.text;
         let cleanLine = line.replace(/<.*?>/g, '').trim();
 
-        // Improved block note detection 
-        // Handles if they typed "R: sc" (no number, just a prefix)
-        let rowPrefixRegex = /^(R|Row|Rows|Rnd|Rnds|Round|Rounds)(?:[\s\d.:-]|$)/i;
+        let rowPrefixRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)(?:[\s\d.:-]|$)/i;
         let hasDigits = /\d/.test(cleanLine);
 
         if (!hasDigits && !rowPrefixRegex.test(cleanLine)) {
             let newNote = cleanLine;
-            // Reset row tracking when a new Block Note section is reached
             if (newNote !== currentBlockNote) {
                 currentBlockNote = newNote;
                 currentDisplayIndex = 0;
@@ -286,7 +304,6 @@ function processPatternIntoRows(patternText) {
 
         currentDisplayIndex++;
 
-        // Extract Inline Row Note (#)
         let rowNote = "";
         let hashIdx = line.indexOf('#');
         if (hashIdx !== -1) {
@@ -294,16 +311,14 @@ function processPatternIntoRows(patternText) {
             line = line.substring(0, hashIdx).trim(); 
         }
 
-        // Detect Prefix text (Rnd, Round, R, Row) for visual display
-        let pm = line.match(/^(R|Row|Rows|Rnd|Rnds|Round|Rounds)/i);
+        let pm = line.match(/^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)/i);
         let rowPrefix = pm ? pm[1] : 'Row';
         rowPrefix = rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase();
         if (rowPrefix.endsWith('s')) rowPrefix = rowPrefix.slice(0, -1);
-        if (rowPrefix === 'R') rowPrefix = 'Row'; // Normalize 'R' to 'Row'
+        if (rowPrefix === 'R') rowPrefix = 'Row'; 
 
-        // Safely strip the starting prefix and/or numbers (supports 0 digits, e.g. "R: ")
-        cleanLine = line.replace(/^((?:R|Row|Rows|Rnd|Rnds|Round|Rounds)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
-        // Strip trailing brackets/parentheses for stitch totals (e.g., "[14]" or "(14)")
+        // FIXED: Safely strip the starting prefix. Uses ^\s* to ignore invisible spaces!
+        cleanLine = line.replace(/^\s*((?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
         cleanLine = cleanLine.replace(/\s*[\[\(]\d+[\]\)]\s*$/, '');
         cleanLine = distributeColorTags(cleanLine);
 
@@ -475,10 +490,11 @@ function updateProject() {
 
     let newRows = processPatternIntoRows(newPatternText);
 
+    // FIXED: Instead of strictly preserving the old broken nodes, transfer progress carefully.
     newRows.forEach((newRow, rIdx) => {
         let oldRow = proj.rows[rIdx];
         if (oldRow && oldRow.originalText === newRow.originalText) {
-            newRow.nodes = JSON.parse(JSON.stringify(oldRow.nodes));
+            transferProgress(oldRow.nodes, newRow.nodes);
         }
     });
 
@@ -731,10 +747,8 @@ function refreshTrackerUI() {
     let proj = projects.find(p => p.id === currentProjectId);
     let row = proj.rows[currentRowIndex];
 
-    // Read calculated display index, fallback to absolute index just in case
     let displayNum = row.displayIndex !== undefined ? row.displayIndex : (currentRowIndex + 1);
     
-    // Check fallback and enforce normalization to "Row" right before UI render
     let prefix = row.rowPrefix || 'Row';
     if (prefix === 'R') prefix = 'Row';
 
@@ -750,7 +764,6 @@ function refreshTrackerUI() {
         noteContainer.style.display = 'none';
     }
 
-    // Refresh row tracking note
     let noteInput = document.getElementById('tracker-row-note-input');
     if(noteInput) {
         noteInput.value = row.rowNote || "";
