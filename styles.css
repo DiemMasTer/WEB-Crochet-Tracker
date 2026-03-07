@@ -34,7 +34,7 @@ body {
     background-color: var(--bg-color);
     color: var(--text-main);
     margin: 0;
-    padding: 20px;
+    padding: 10px; /* Reduced to gain horizontal space on mobile */
     display: flex;
     justify-content: center;
 }
@@ -42,7 +42,7 @@ body {
 #app {
     width: 100%;
     max-width: 450px;
-    height: 95vh;
+    height: 98dvh; /* dvh fixes height issues with mobile browser search bars */
     display: flex;
     flex-direction: column;
 }
@@ -50,10 +50,11 @@ body {
 .view {
     display: none;
     flex-direction: column;
-    gap: 15px;
+    gap: 12px; /* Tighter gap */
     flex-grow: 1;
     overflow-y: auto;
-    padding-bottom: 20px;
+    overflow-x: hidden; /* Guarantee no horizontal scroll */
+    padding-bottom: 10px;
 }
 
 .view.active { display: flex; }
@@ -184,25 +185,26 @@ button:hover { filter: brightness(1.2); }
 
 .nav-btn {
     border-radius: 50%;
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: 18px;
     background-color: white;
     color: black;
+    flex-shrink: 0;
 }
 
 .block-note-badge {
     background-color: var(--tracker-bg);
     color: white;
-    padding: 6px 15px;
+    padding: 6px 16px; /* Compact */
     border-radius: 20px;
     font-weight: bold;
-    font-size: 14px;
-    margin-bottom: 10px;
-    border: 1px solid var(--btn-hover);
+    font-size: 14px; /* Compact */
+    margin-bottom: 8px; /* Tighter margin */
+    border: 2px solid var(--btn-hover);
     align-self: center;
     display: none;
     text-transform: uppercase;
@@ -211,31 +213,29 @@ button:hover { filter: brightness(1.2); }
 
 .pattern-display {
     background-color: var(--accent);
-    padding: 15px;
+    padding: 10px 12px; /* Tighter vertical padding */
     border-radius: 10px;
     text-align: center;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
-    margin-bottom: 10px;
+    margin-bottom: 5px;
     cursor: pointer;
-    user-select: none; /* Prevents ugly text highlighting on double click */
-    touch-action: manipulation; /* Disables double-tap zoom on mobile */
+    user-select: none;
+    touch-action: manipulation;
     transition: 0.2s;
 }
 
-.pattern-display:hover {
-    filter: brightness(1.15);
-}
+.pattern-display:hover { filter: brightness(1.15); }
 
 #segments-container {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px; /* Reduced to fit more on screen */
 }
 
 .tracker-notes-section {
     margin-top: auto;
-    padding-top: 20px;
+    padding-top: 15px;
 }
 
 .tracker-notes-header {
@@ -281,48 +281,55 @@ button:hover { filter: brightness(1.2); }
 .segment-card {
     background-color: var(--tracker-bg);
     border: 2px dashed rgba(255,255,255,0.3);
-    border-radius: 15px;
-    padding: 12px 15px;
+    border-radius: 12px; /* Slightly tighter curves */
+    padding: 8px 10px; /* Reduced padding */
     display: flex;
     justify-content: space-between;
     align-items: center;
     transition: 0.3s;
+    min-width: 0; /* KEY: Prevents Flexbox from causing horizontal scrolling */
+    width: 100%;
 }
 
 .segment-card.done { background-color: var(--tracker-bg-done); border-style: solid; }
 
 .segment-text {
-    font-size: 18px;
+    font-size: 16px; /* Slightly smaller */
     font-weight: bold;
-    flex: 1;
-    padding-right: 10px;
+    flex: 1 1 auto;
+    padding-right: 8px;
     display: flex;
     align-items: center;
+    min-width: 0; /* KEY */
+    word-wrap: break-word; /* Allows long text/code to wrap downwards safely */
+    line-height: 1.25;
 }
 
 .segment-controls {
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 8px; /* Tighter gap */
+    flex-shrink: 0; /* Ensures buttons never get squished */
 }
 
 .segment-counter {
-    font-size: 24px;
+    font-size: 18px;
     font-weight: bold;
-    min-width: 50px;
+    min-width: 40px; /* Tighter */
     text-align: center;
 }
 
 .btn-circle {
-    width: 45px;
-    height: 45px;
+    width: 36px; /* Reduced from 45px to save space */
+    height: 36px;
     border-radius: 50%;
-    font-size: 24px;
+    font-size: 20px;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     background-color: var(--accent);
+    flex-shrink: 0;
 }
 
 .btn-circle.pulse {
@@ -338,31 +345,34 @@ button:hover { filter: brightness(1.2); }
 
 .group-layout { 
     display: flex; 
-    gap: 10px; 
+    gap: 6px; /* Reduced gap */
     align-items: center; 
+    min-width: 0;
+    width: 100%;
 }
 
 .group-segments { 
     flex: 1; 
     display: flex; 
     flex-direction: column; 
-    gap: 8px; 
+    gap: 6px; 
     position: relative;
-    padding-right: 20px; 
-    padding-top: 4px; 
-    padding-bottom: 4px;
+    padding-right: 14px; /* Tighter edge */
+    padding-top: 2px; 
+    padding-bottom: 2px;
+    min-width: 0;
 }
 
 .group-segments::after {
     content: '';
     position: absolute;
-    right: 5px; 
+    right: 2px; /* Tighter */
     top: 0; 
     bottom: 0; 
-    width: 15px;
-    border: 4px solid var(--btn-hover);
+    width: 10px;
+    border: 3px solid var(--btn-hover);
     border-left: none; 
-    border-radius: 0 12px 12px 0; 
+    border-radius: 0 10px 10px 0; 
     z-index: 0;
     pointer-events: none;
 }
@@ -373,17 +383,18 @@ button:hover { filter: brightness(1.2); }
     align-items: center; 
     gap: 4px;
     z-index: 1;
+    flex-shrink: 0;
 }
 
 .bracket-btn {
-    width: 32px !important;
-    height: 32px !important;
-    font-size: 18px !important;
+    width: 28px !important; /* Scaled down */
+    height: 28px !important;
+    font-size: 16px !important;
 }
 
 .bracket-counter {
-    font-size: 18px !important;
-    min-width: 40px !important;
+    font-size: 16px !important;
+    min-width: 35px !important;
 }
 
 .row-list-item {
