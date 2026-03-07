@@ -1,5 +1,3 @@
-// --- START OF FILE app.js ---
-
 // --- Theme Management ---
 function loadTheme() {
     let saved = localStorage.getItem('crochetTheme') || 'midnight';
@@ -163,8 +161,14 @@ function renderColorToolbars() {
             btn.style.backgroundColor = cObj.color;
             btn.title = `Apply ${cObj.name} color (<${cObj.tag}>)`;
 
-            btn.onclick = () => {
+            btn.onclick = (e) => {
+                e.preventDefault();
                 let ta = document.getElementById(tb.target);
+                
+                // Save the current scroll position so we don't jump
+                let activeView = document.querySelector('.view.active');
+                let currentScroll = activeView ? activeView.scrollTop : 0;
+
                 let start = ta.selectionStart;
                 let end = ta.selectionEnd;
                 let text = ta.value;
@@ -172,15 +176,20 @@ function renderColorToolbars() {
                 if (start === end) {
                     let insert = `<${cObj.tag}></${cObj.tag}>`;
                     ta.value = text.substring(0, start) + insert + text.substring(end);
-                    ta.focus();
+                    // Focus back without scrolling the page
+                    ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start + cObj.tag.length + 2, start + cObj.tag.length + 2);
                 } else {
                     let selectedText = text.substring(start, end);
                     let wrapped = `<${cObj.tag}>${selectedText}</${cObj.tag}>`;
                     ta.value = text.substring(0, start) + wrapped + text.substring(end);
-                    ta.focus();
+                    // Focus back without scrolling the page
+                    ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start, start + wrapped.length);
                 }
+
+                // Force the scroll position to stay exactly where it was
+                if (activeView) activeView.scrollTop = currentScroll;
             };
             container.appendChild(btn);
         });
