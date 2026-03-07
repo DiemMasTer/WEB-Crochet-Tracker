@@ -20,8 +20,7 @@ You can do anything you want with this code, but you cannot use it for commercia
 - add **pattern sections**, such as "Head" OR "body" or whatever you want to name them
 - add **notes** to your project and rows.
 - add **colors** to stitches, or to sections.
-- use US/UK/ES/... terminology (to work with Chinese some change should be made to the parser) 
-
+)
 
 
 
