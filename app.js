@@ -52,6 +52,39 @@ function transferProgress(oldNodes, newNodes) {
     }
 }
 
+// --- The Fuzz: Smart Progress Transfer ---
+function syncProjectProgress(oldRows, newRows) {
+    let consumed = new Set();
+    
+    // Pass 1: Strict matching by exact text (handles inserted/deleted rows perfectly)
+    newRows.forEach((newRow, rIdx) => {
+        let searchIndices = [rIdx, rIdx - 1, rIdx + 1, rIdx - 2, rIdx + 2];
+        for (let i of searchIndices) {
+            let oldRow = oldRows[i];
+            if (oldRow && !consumed.has(i) && oldRow.originalText === newRow.originalText) {
+                transferProgress(oldRow.nodes, newRow.nodes);
+                newRow.rowNote = oldRow.rowNote || newRow.rowNote;
+                consumed.add(i);
+                newRow._matched = true;
+                break;
+            }
+        }
+    });
+
+    // Pass 2: Fallback for color tags / inline edits at the exact same index
+    newRows.forEach((newRow, rIdx) => {
+        if (!newRow._matched) {
+            let oldRow = oldRows[rIdx];
+            if (oldRow && !consumed.has(rIdx)) {
+                transferProgress(oldRow.nodes, newRow.nodes);
+                newRow.rowNote = oldRow.rowNote || newRow.rowNote;
+                consumed.add(rIdx);
+            }
+        }
+        delete newRow._matched; // clean up temp property
+    });
+}
+
 let needsSave = false;
 
 function migrateProject(proj) {
@@ -100,14 +133,7 @@ function migrateProject(proj) {
 
     if (proj.patternText) {
         let freshRows = processPatternIntoRows(proj.patternText);
-        
-        freshRows.forEach((fRow, rIdx) => {
-            let oRow = proj.rows[rIdx];
-            if (oRow) {
-                fRow.rowNote = oRow.rowNote || fRow.rowNote;
-                transferProgress(oRow.nodes, fRow.nodes);
-            }
-        });
+        syncProjectProgress(proj.rows, freshRows);
 
         if (JSON.stringify(proj.rows) !== JSON.stringify(freshRows)) {
             proj.rows = freshRows;
@@ -165,7 +191,6 @@ function renderColorToolbars() {
                 e.preventDefault();
                 let ta = document.getElementById(tb.target);
                 
-                // Save the current scroll position so we don't jump
                 let activeView = document.querySelector('.view.active');
                 let currentScroll = activeView ? activeView.scrollTop : 0;
 
@@ -176,19 +201,16 @@ function renderColorToolbars() {
                 if (start === end) {
                     let insert = `<${cObj.tag}></${cObj.tag}>`;
                     ta.value = text.substring(0, start) + insert + text.substring(end);
-                    // Focus back without scrolling the page
                     ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start + cObj.tag.length + 2, start + cObj.tag.length + 2);
                 } else {
                     let selectedText = text.substring(start, end);
                     let wrapped = `<${cObj.tag}>${selectedText}</${cObj.tag}>`;
                     ta.value = text.substring(0, start) + wrapped + text.substring(end);
-                    // Focus back without scrolling the page
                     ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start, start + wrapped.length);
                 }
 
-                // Force the scroll position to stay exactly where it was
                 if (activeView) activeView.scrollTop = currentScroll;
             };
             container.appendChild(btn);
@@ -294,10 +316,7 @@ function applyNodeColor(colorTag) {
     }
     
     let newRows = processPatternIntoRows(proj.patternText);
-    newRows.forEach((newR, rIdx) => {
-        let oldR = proj.rows[rIdx];
-        if (oldR) transferProgress(oldR.nodes, newR.nodes);
-    });
+    syncProjectProgress(proj.rows, newRows);
     
     proj.rows = newRows;
     saveData();
@@ -330,12 +349,7 @@ function saveRowEdit() {
     proj.patternText = lines.join('\n');
     
     let newRows = processPatternIntoRows(proj.patternText);
-    newRows.forEach((newRow, rIdx) => {
-        let oldRow = proj.rows[rIdx];
-        if (oldRow && oldRow.originalText === newRow.originalText) {
-            transferProgress(oldRow.nodes, newRow.nodes);
-        }
-    });
+    syncProjectProgress(proj.rows, newRows);
     
     proj.rows = newRows;
     
@@ -346,7 +360,6 @@ function saveRowEdit() {
     saveData();
     closeModal('row-edit-modal');
 
-    // Keep the main project edit textarea safely in sync
     let editTa = document.getElementById('edit-proj-pattern');
     if (editTa) editTa.value = proj.patternText;
 
@@ -703,13 +716,7 @@ function updateProject() {
     proj.patternText = newPatternText;
 
     let newRows = processPatternIntoRows(newPatternText);
-
-    newRows.forEach((newRow, rIdx) => {
-        let oldRow = proj.rows[rIdx];
-        if (oldRow && oldRow.originalText === newRow.originalText) {
-            transferProgress(oldRow.nodes, newRow.nodes);
-        }
-    });
+    syncProjectProgress(proj.rows, newRows);
 
     proj.rows = newRows;
     saveData();
@@ -739,14 +746,36 @@ function getNodeByPath(nodes, pathStr) {
     return current;
 }
 
+// --- Tracking with Micro-Rewards (The Buzz) ---
 function updateNode(pathStr, amount) {
     let proj = projects.find(p => p.id === currentProjectId);
-    let node = getNodeByPath(proj.rows[currentRowIndex].nodes, pathStr);
+    let rowNodes = proj.rows[currentRowIndex].nodes;
+    let node = getNodeByPath(rowNodes, pathStr);
+    
+    // Capture state BEFORE incrementing
+    let wasMax = node.current === node.max;
+    let wasRowDone = checkNodesDone(rowNodes); 
+    
     node.current += amount;
     if (node.current < 0) node.current = 0;
     if (node.current > node.max) node.current = node.max;
+    
+    // Capture state AFTER incrementing
+    let isMax = node.current === node.max;
+    let isRowDone = checkNodesDone(rowNodes);
+    
     saveData();
     refreshTrackerUI();
+
+    if (amount > 0) {
+        if (!wasRowDone && isRowDone) {
+            // Big double buzz for finishing the entire row
+            if (navigator.vibrate) navigator.vibrate([30, 60, 30]); 
+        } else if (!wasMax && isMax) {
+            // Quick single buzz for finishing a segment/step (e.g., 5/5)
+            if (navigator.vibrate) navigator.vibrate(25); 
+        }
+    }
 }
 
 function resetNodesDeep(nodes) {
@@ -762,7 +791,12 @@ function resetNodesDeep(nodes) {
 
 function updateGroupNode(pathStr, amount) {
     let proj = projects.find(p => p.id === currentProjectId);
-    let node = getNodeByPath(proj.rows[currentRowIndex].nodes, pathStr);
+    let rowNodes = proj.rows[currentRowIndex].nodes;
+    let node = getNodeByPath(rowNodes, pathStr);
+
+    // Capture state BEFORE incrementing
+    let wasMax = node.current === node.max;
+    let wasRowDone = checkNodesDone(rowNodes);
 
     if (!node.history) node.history = {};
     node.history[node.current] = JSON.parse(JSON.stringify(node.nodes));
@@ -771,14 +805,29 @@ function updateGroupNode(pathStr, amount) {
     if (node.current < 1) node.current = 1;
     if (node.current > node.max) node.current = node.max;
 
+    // Capture state AFTER incrementing
+    let isMax = node.current === node.max;
+
     if (node.history[node.current]) {
         node.nodes = JSON.parse(JSON.stringify(node.history[node.current]));
     } else {
         resetNodesDeep(node.nodes);
     }
+    
+    let isRowDone = checkNodesDone(rowNodes);
 
     saveData();
     refreshTrackerUI();
+
+    if (amount > 0) {
+        if (!wasRowDone && isRowDone) {
+            // Big double buzz for finishing the entire row
+            if (navigator.vibrate) navigator.vibrate([30, 60, 30]); 
+        } else if (!wasMax && isMax) {
+            // Quick single buzz for maxing out a group cycle (e.g., 6/6)
+            if (navigator.vibrate) navigator.vibrate(25); 
+        }
+    }
 }
 
 function isNodeDone(node) {
@@ -1018,3 +1067,8 @@ loadTheme();
 renderColorToolbars();
 renderNodeColorPicker();
 renderProjectList();
+
+// --- The Bug Fix: Safety Net ---
+window.addEventListener('beforeunload', () => {
+    saveData();
+});
