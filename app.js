@@ -27,6 +27,9 @@ let currentRowIndex = 0;
 
 let projectToDeleteId = null;
 let currentExportFilename = "pattern.txt";
+let currentNodePathForColor = null;
+let currentTargetType = null; 
+let editingSourceLineIndex = null; // Used for row inline editing
 
 function saveData() {
     localStorage.setItem('crochetProjects', JSON.stringify(projects));
@@ -36,7 +39,6 @@ function closeModal(id) {
     document.getElementById(id).style.display = 'none';
 }
 
-// Helper: Safely transfers stitch counts to newly parsed nodes so progress isn't lost during updates/bugfixes
 function transferProgress(oldNodes, newNodes) {
     if (!oldNodes || !newNodes || oldNodes.length !== newNodes.length) return;
     for (let i = 0; i < newNodes.length; i++) {
@@ -52,16 +54,13 @@ function transferProgress(oldNodes, newNodes) {
     }
 }
 
-// Backup & Migration to ensure structure works with old saves
 let needsSave = false;
 
 function migrateProject(proj) {
     let changed = false;
     
-    // Migrate Project Notes
     if (proj.notes === undefined) { proj.notes = ""; changed = true; }
 
-    // 1. First, handle legacy v1 projects (segments -> nodes)
     proj.rows.forEach(r => {
         if (!r.nodes && r.segments) {
             changed = true;
@@ -101,21 +100,17 @@ function migrateProject(proj) {
         }
     });
 
-    // 2. Now force a rebuild of rows from patternText to apply any parser bugfixes
     if (proj.patternText) {
         let freshRows = processPatternIntoRows(proj.patternText);
         
         freshRows.forEach((fRow, rIdx) => {
             let oRow = proj.rows[rIdx];
             if (oRow) {
-                // Restore any notes
                 fRow.rowNote = oRow.rowNote || fRow.rowNote;
-                // Transfer progress safely
                 transferProgress(oRow.nodes, fRow.nodes);
             }
         });
 
-        // If structure or text changed because of parser fixes, update the project internally
         if (JSON.stringify(proj.rows) !== JSON.stringify(freshRows)) {
             proj.rows = freshRows;
             changed = true;
@@ -128,8 +123,29 @@ function migrateProject(proj) {
 projects.forEach(p => { if (migrateProject(p)) needsSave = true; });
 if (needsSave) saveData();
 
-// --- Color Toolbar ---
-const PALETTE = ['red', 'darkorange', 'gold', 'forestgreen', 'dodgerblue', 'blueviolet', 'hotpink', 'saddlebrown', 'black', 'white', 'gray'];
+// --- Color Toolbar & Assignments ---
+const PALETTE = [
+    { name: 'Black', color: 'black', tag: 'bla' },
+    { name: 'White', color: 'white', tag: 'w' },
+    { name: 'Light Yellow', color: '#FFFAA0', tag: 'ly' },
+    { name: 'Yellow', color: '#FFFF00', tag: 'y' },
+    { name: 'Light Orange', color: '#FFD580', tag: 'lo' },
+    { name: 'Orange', color: '#FFAC1C', tag: 'o' },
+    { name: 'Light Red', color: '#FF7276', tag: 'lr' },
+    { name: 'Red', color: '#FF0000', tag: 'r' },
+    { name: 'Light Pink', color: '#F5DADF', tag: 'lpin' },
+    { name: 'Pink', color: '#FFC0CB', tag: 'pin' },
+    { name: 'Light Purple', color: '#E0B0FF', tag: 'lpu' },
+    { name: 'Purple', color: '#DA70D6', tag: 'pu' },
+    { name: 'Light Blue', color: '#89CFF0', tag: 'lblu' },
+    { name: 'Blue', color: '#0000FF', tag: 'blu' },
+    { name: 'Light Green', color: '#90EE90', tag: 'lgr' },
+    { name: 'Green', color: '#4CBB17', tag: 'gr' },
+    { name: 'Light Brown', color: '#C19A6B', tag: 'lbro' },
+    { name: 'Brown', color: '#7B3F00', tag: 'bro' },
+    { name: 'Light Grey', color: '#D3D3D3', tag: 'lgre' },
+    { name: 'Grey', color: '#899499', tag: 'gre' }
+];
 
 function renderColorToolbars() {
     const toolbars = [
@@ -141,11 +157,11 @@ function renderColorToolbars() {
         if (!container) return;
         container.innerHTML = '';
 
-        PALETTE.forEach(c => {
+        PALETTE.forEach(cObj => {
             let btn = document.createElement('div');
             btn.className = 'color-btn';
-            btn.style.backgroundColor = c;
-            btn.title = `Apply ${c} color`;
+            btn.style.backgroundColor = cObj.color;
+            btn.title = `Apply ${cObj.name} color (<${cObj.tag}>)`;
 
             btn.onclick = () => {
                 let ta = document.getElementById(tb.target);
@@ -154,13 +170,13 @@ function renderColorToolbars() {
                 let text = ta.value;
 
                 if (start === end) {
-                    let insert = `<${c}></${c}>`;
+                    let insert = `<${cObj.tag}></${cObj.tag}>`;
                     ta.value = text.substring(0, start) + insert + text.substring(end);
                     ta.focus();
-                    ta.setSelectionRange(start + c.length + 2, start + c.length + 2);
+                    ta.setSelectionRange(start + cObj.tag.length + 2, start + cObj.tag.length + 2);
                 } else {
                     let selectedText = text.substring(start, end);
-                    let wrapped = `<${c}>${selectedText}</${c}>`;
+                    let wrapped = `<${cObj.tag}>${selectedText}</${cObj.tag}>`;
                     ta.value = text.substring(0, start) + wrapped + text.substring(end);
                     ta.focus();
                     ta.setSelectionRange(start, start + wrapped.length);
@@ -171,13 +187,174 @@ function renderColorToolbars() {
     });
 }
 
+function renderNodeColorPicker() {
+    let container = document.getElementById('node-color-grid');
+    if (!container) return;
+    container.innerHTML = '';
+    PALETTE.forEach(cObj => {
+        let btn = document.createElement('div');
+        btn.className = 'color-btn';
+        btn.style.backgroundColor = cObj.color;
+        btn.title = cObj.name;
+        btn.onclick = () => applyNodeColor(cObj.tag);
+        container.appendChild(btn);
+    });
+}
+
+function getColorCode(tag) {
+    if (!tag) return null;
+    let lowerTag = tag.toLowerCase();
+    let found = PALETTE.find(p => p.tag.toLowerCase() === lowerTag);
+    return found ? found.color : tag; 
+}
+
+// --- Dynamic Color Change Engine ---
+function openNodeColorPicker(pathStr, event) {
+    event.stopPropagation();
+    currentTargetType = 'node';
+    currentNodePathForColor = pathStr;
+    document.getElementById('node-color-modal').querySelector('h3').innerText = 'Color Stitch';
+    document.getElementById('node-color-modal').style.display = 'flex';
+}
+
+function openBlockNoteColorPicker(event) {
+    event.stopPropagation();
+    currentTargetType = 'blockNote';
+    currentNodePathForColor = null;
+    document.getElementById('node-color-modal').querySelector('h3').innerText = 'Color Section Label';
+    document.getElementById('node-color-modal').style.display = 'flex';
+}
+
+function serializeNodesToText(nodes) {
+    let parts = [];
+    for (let n of nodes) {
+        let str = "";
+        if (n.type === 'step') {
+            str = `${n.max} ${n.text}`;
+        } else if (n.type === 'group') {
+            str = `[ ${serializeNodesToText(n.nodes)} ] x ${n.max}`;
+        }
+        if (n.color) {
+            str = `<${n.color}>${str}</${n.color}>`;
+        }
+        parts.push(str);
+    }
+    return parts.join(", ");
+}
+
+function applyNodeColor(colorTag) {
+    let proj = projects.find(p => p.id === currentProjectId);
+    let row = proj.rows[currentRowIndex];
+    
+    if (currentTargetType === 'node') {
+        if (!currentNodePathForColor) return;
+        let node = getNodeByPath(row.nodes, currentNodePathForColor);
+        node.color = colorTag;
+        
+        let lines = proj.patternText.split('\n');
+        let sourceIdx = row.sourceLineIndex;
+        
+        if (sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
+            let originalLine = lines[sourceIdx];
+            
+            let prefixMatch = originalLine.match(/^\s*(?:(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*\d+\s*-\s*(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*\d+|(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*|\d+)[.:-]+\s*/i);
+            let prefix = prefixMatch ? prefixMatch[0] : "";
+            
+            let hashIdx = originalLine.indexOf('#');
+            let suffix = hashIdx !== -1 ? " " + originalLine.substring(hashIdx) : "";
+            
+            let newPatternPart = serializeNodesToText(row.nodes);
+            let rowTotal = row.rowTotalStr ? " " + row.rowTotalStr : "";
+            
+            lines[sourceIdx] = prefix + newPatternPart + rowTotal + suffix;
+            proj.patternText = lines.join('\n');
+        }
+    } else if (currentTargetType === 'blockNote') {
+        let sourceIdx = row.blockNoteSourceIdx;
+        if (sourceIdx !== undefined && sourceIdx !== null) {
+            let lines = proj.patternText.split('\n');
+            let line = lines[sourceIdx];
+            
+            let hashIdx = line.indexOf('#');
+            let comment = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
+            let baseText = row.blockNote; 
+            
+            lines[sourceIdx] = colorTag ? `<${colorTag}>${baseText}</${colorTag}>${comment}` : `${baseText}${comment}`;
+            proj.patternText = lines.join('\n');
+        }
+    }
+    
+    let newRows = processPatternIntoRows(proj.patternText);
+    newRows.forEach((newR, rIdx) => {
+        let oldR = proj.rows[rIdx];
+        if (oldR) transferProgress(oldR.nodes, newR.nodes);
+    });
+    
+    proj.rows = newRows;
+    saveData();
+    refreshTrackerUI();
+    closeModal('node-color-modal');
+    currentTargetType = null;
+    currentNodePathForColor = null;
+}
+
+// --- Specific Row Inline Editing ---
+function openRowEditModal(rowIdx) {
+    let proj = projects.find(p => p.id === currentProjectId);
+    if (!proj || !proj.rows[rowIdx]) return;
+
+    editingSourceLineIndex = proj.rows[rowIdx].sourceLineIndex;
+    let lines = proj.patternText.split('\n');
+    
+    document.getElementById('row-edit-textarea').value = lines[editingSourceLineIndex];
+    document.getElementById('row-edit-modal').style.display = 'flex';
+}
+
+function saveRowEdit() {
+    let proj = projects.find(p => p.id === currentProjectId);
+    if (!proj) return;
+
+    let lines = proj.patternText.split('\n');
+    let newText = document.getElementById('row-edit-textarea').value;
+    
+    lines[editingSourceLineIndex] = newText;
+    proj.patternText = lines.join('\n');
+    
+    let newRows = processPatternIntoRows(proj.patternText);
+    newRows.forEach((newRow, rIdx) => {
+        let oldRow = proj.rows[rIdx];
+        if (oldRow && oldRow.originalText === newRow.originalText) {
+            transferProgress(oldRow.nodes, newRow.nodes);
+        }
+    });
+    
+    proj.rows = newRows;
+    
+    if (currentRowIndex >= proj.rows.length) {
+        currentRowIndex = Math.max(0, proj.rows.length - 1);
+    }
+
+    saveData();
+    closeModal('row-edit-modal');
+
+    // Keep the main project edit textarea safely in sync
+    let editTa = document.getElementById('edit-proj-pattern');
+    if (editTa) editTa.value = proj.patternText;
+
+    if (document.getElementById('tracker-view').classList.contains('active')) {
+        refreshTrackerUI();
+    } else if (document.getElementById('project-view').classList.contains('active')) {
+        renderRowList(proj);
+    }
+}
+
+
 // --- Parser Engine ---
 function splitTopLevel(str) {
     let result = [], current = '', depth = 0;
     for (let i = 0; i < str.length; i++) {
         let char = str[i];
         if (char === '(' || char === '[' || char === '{' || char === '<') depth++;
-        // FIXED: Replaced Math.max(0, depth--) which evaluated in the wrong order
         else if (char === ')' || char === ']' || char === '}' || char === '>') depth = Math.max(0, depth - 1);
 
         if (char === ',' && depth === 0) {
@@ -208,13 +385,11 @@ function parsePart(str, inheritedColor = null) {
         str = colorMatch[2].trim();
     }
 
-    // UPDATED: Now universally supports (), [], AND {} combinations safely!
     let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X)\s*(\d+)$/i);
     if (groupMatch) {
         return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     }
     
-    // UPDATED: Now supports grouping without multi like [5sc, inc] 
     let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
     if (groupMatchNoMulti) {
         return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
@@ -291,16 +466,37 @@ function processPatternIntoRows(patternText) {
 
     expandedLines.forEach(item => {
         let line = item.text;
-        let cleanLine = line.replace(/<.*?>/g, '').trim();
+        let trimmedLine = line.trim();
+        let cleanLine = trimmedLine.replace(/<.*?>/g, '').trim();
 
         let rowPrefixRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)(?:[\s\d.:-]|$)/i;
         let hasDigits = /\d/.test(cleanLine);
 
         if (!hasDigits && !rowPrefixRegex.test(cleanLine)) {
-            let newNote = cleanLine;
-            if (newNote !== currentBlockNote) {
-                currentBlockNote = newNote;
+            let displayNote = cleanLine;
+            let noteColor = null;
+
+            let colorMatch = trimmedLine.match(/^\s*<([a-zA-Z]+)>([\s\S]*?)<\/\1>\s*(?:#.*)?$/i);
+            if (colorMatch) {
+                noteColor = colorMatch[1];
+                displayNote = colorMatch[2].trim();
+            }
+
+            let hashIdx = displayNote.indexOf('#');
+            if (hashIdx !== -1) {
+                displayNote = displayNote.substring(0, hashIdx).trim();
+            }
+
+            if (!currentBlockNote || displayNote !== currentBlockNote.text) {
+                currentBlockNote = {
+                    text: displayNote,
+                    color: noteColor,
+                    sourceLineIndex: item.sourceLineIndex
+                };
                 currentDisplayIndex = 0;
+            } else if (currentBlockNote && currentBlockNote.color !== noteColor) {
+                currentBlockNote.color = noteColor;
+                currentBlockNote.sourceLineIndex = item.sourceLineIndex;
             }
             return;
         }
@@ -322,8 +518,10 @@ function processPatternIntoRows(patternText) {
 
         cleanLine = line.replace(/^\s*((?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
         
-        // Strip trailing brackets/parentheses for stitch totals (e.g., [16], (16), {16}, [ 16 sts ])
-        cleanLine = cleanLine.replace(/\s*[\[\(\{]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)\}]\s*$/i, '');
+        let totalRegex = /\s*([\[\(\{]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)\}])\s*$/i;
+        let totalMatch = cleanLine.match(totalRegex);
+        let rowTotalStr = totalMatch ? totalMatch[1] : "";
+        cleanLine = cleanLine.replace(totalRegex, '');
         
         cleanLine = distributeColorTags(cleanLine);
 
@@ -332,8 +530,11 @@ function processPatternIntoRows(patternText) {
         finalRows.push({
             originalText: line, 
             nodes: nodes,
-            blockNote: currentBlockNote,
+            blockNote: currentBlockNote ? currentBlockNote.text : null,
+            blockNoteColor: currentBlockNote ? currentBlockNote.color : null,
+            blockNoteSourceIdx: currentBlockNote ? currentBlockNote.sourceLineIndex : null,
             rowNote: rowNote,
+            rowTotalStr: rowTotalStr, 
             sourceLineIndex: item.sourceLineIndex,
             displayIndex: currentDisplayIndex,
             rowPrefix: rowPrefix
@@ -427,7 +628,6 @@ function processImportData(rawText) {
     }
 }
 
-// --- Core Navigation ---
 function showView(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
@@ -508,7 +708,6 @@ function updateProject() {
     alert("Project updated!");
 }
 
-// --- Tracker Operations ---
 function openTracker(rowIdx) {
     currentRowIndex = rowIdx;
     refreshTrackerUI();
@@ -583,7 +782,6 @@ function checkNodesDone(nodes) {
     return nodes.every(isNodeDone);
 }
 
-// --- Tracking Notes Edit ---
 let isNoteVisible = true;
 
 function toggleTrackerNote() {
@@ -602,17 +800,15 @@ function toggleTrackerNote() {
 
 function saveRowNoteFromUI() {
     let noteInput = document.getElementById('tracker-row-note-input');
-    // Replace newlines to keep text file safely line-by-line formatted.
     let newNote = noteInput.value.replace(/\n/g, ' ');
 
     let proj = projects.find(p => p.id === currentProjectId);
     let row = proj.rows[currentRowIndex];
 
-    if(row.rowNote === newNote) return; // Note didn't change
+    if(row.rowNote === newNote) return; 
 
     row.rowNote = newNote;
 
-    // Magically update the original raw pattern string
     let lines = proj.patternText.split('\n');
     let sourceIdx = row.sourceLineIndex;
 
@@ -625,13 +821,12 @@ function saveRowNoteFromUI() {
         if(newNote.trim().length > 0) {
             line = line.trimRight() + " # " + newNote.trim();
         } else {
-            line = line.trimRight(); // Removed the note entirely
+            line = line.trimRight(); 
         }
         lines[sourceIdx] = line;
         proj.patternText = lines.join('\n');
     }
 
-    // Since Ranges (e.g. Row 1-3) share the same source index, reflect update
     proj.rows.forEach(r => {
         if(r.sourceLineIndex === sourceIdx) {
             r.rowNote = newNote;
@@ -641,7 +836,6 @@ function saveRowNoteFromUI() {
     saveData();
 }
 
-// --- Rendering Helpers ---
 function formatProgress(nodes) {
     let parts = [];
     nodes.forEach(n => {
@@ -693,10 +887,30 @@ function renderRowList(proj) {
         div.className = `row-list-item ${isDone ? 'row-done' : ''}`;
 
         let progressStr = formatProgress(row.nodes);
-        let noteBadge = row.blockNote ? `<span style="font-size: 11px; background: var(--tracker-bg); padding: 3px 6px; border-radius: 6px; margin-right: 8px;">${row.blockNote}</span>` : '';
+        let noteBadge = '';
+        if (row.blockNote) {
+            let actualColor = getColorCode(row.blockNoteColor);
+            let borderStyle = actualColor ? `border-left: 4px solid ${actualColor};` : '';
+            noteBadge = `<span style="font-size: 11px; background: var(--tracker-bg); ${borderStyle} padding: 3px 6px; border-radius: 6px; margin-right: 8px;">${row.blockNote}</span>`;
+        }
+        
         let visualText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
 
-        div.innerHTML = `<span>${noteBadge}${visualText}</span> <span>${progressStr}</span>`;
+        let editBtn = `
+            <span class="action-icon" style="color:var(--text-muted); padding:4px;" onclick="event.stopPropagation(); openRowEditModal(${idx});" title="Edit row">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+            </span>`;
+
+        div.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span>${noteBadge}${visualText}</span>
+                ${editBtn}
+            </div> 
+            <span>${progressStr}</span>`;
+            
         div.onclick = () => openTracker(idx);
         list.appendChild(div);
     });
@@ -710,8 +924,14 @@ function renderNodesHtml(nodes, pathPrefix = []) {
 
         if (node.type === 'step') {
             let isDone = node.current === node.max;
-            let borderColor = node.color ? `border-left: 6px solid ${node.color};` : '';
-            let colorDot = node.color ? `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:${node.color}; border: 1px solid white; margin-right:8px;"></span>` : '';
+            let actualColor = getColorCode(node.color);
+            let borderColor = actualColor ? `border-left: 6px solid ${actualColor};` : '';
+            
+            let dotStyle = actualColor 
+                ? `background-color:${actualColor}; border: 1px solid white;` 
+                : `background-color:transparent; border: 2px dashed var(--text-muted);`;
+                
+            let colorDot = `<span onclick="openNodeColorPicker('${pathStr}', event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change color"></span>`;
 
             html += `
                 <div class="segment-card ${isDone ? 'done' : ''}" style="${borderColor}">
@@ -733,12 +953,10 @@ function renderNodesHtml(nodes, pathPrefix = []) {
                     <div class="group-segments">
                         ${innerHtml}
                     </div>
-                    <div class="group-bracket">
-                        <div class="group-bracket-controls">
-                            <button class="btn-circle" onclick="updateGroupNode('${pathStr}', -1)">-</button>
-                            <div class="segment-counter">${node.current}/${node.max}</div>
-                            <button class="btn-circle ${groupPlusPulse}" onclick="updateGroupNode('${pathStr}', 1)">+</button>
-                        </div>
+                    <div class="group-controls">
+                        <button class="btn-circle bracket-btn" onclick="updateGroupNode('${pathStr}', -1)">-</button>
+                        <div class="segment-counter bracket-counter">${node.current}/${node.max}</div>
+                        <button class="btn-circle bracket-btn ${groupPlusPulse}" onclick="updateGroupNode('${pathStr}', 1)">+</button>
                     </div>
                 </div>
             `;
@@ -752,18 +970,27 @@ function refreshTrackerUI() {
     let row = proj.rows[currentRowIndex];
 
     let displayNum = row.displayIndex !== undefined ? row.displayIndex : (currentRowIndex + 1);
-    
     let prefix = row.rowPrefix || 'Row';
     if (prefix === 'R') prefix = 'Row';
 
     document.getElementById('track-row-name').innerText = `${prefix} ${displayNum}`;
-
     document.getElementById('track-pattern-text').innerText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
 
     let noteContainer = document.getElementById('track-block-note');
     if (row.blockNote) {
-        noteContainer.innerText = row.blockNote;
-        noteContainer.style.display = 'inline-block';
+        let actualColor = getColorCode(row.blockNoteColor);
+        let dotStyle = actualColor 
+            ? `background-color:${actualColor}; border: 1px solid white;` 
+            : `background-color:transparent; border: 2px dashed var(--text-muted);`;
+
+        noteContainer.innerHTML = `
+            <span onclick="openBlockNoteColorPicker(event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change section color"></span>
+            <span>${row.blockNote}</span>
+        `;
+        
+        noteContainer.style.borderColor = actualColor ? actualColor : 'var(--btn-hover)';
+        noteContainer.style.display = 'inline-flex';
+        noteContainer.style.alignItems = 'center';
     } else {
         noteContainer.style.display = 'none';
     }
@@ -780,4 +1007,5 @@ function refreshTrackerUI() {
 // --- Init App ---
 loadTheme();
 renderColorToolbars();
+renderNodeColorPicker();
 renderProjectList();
