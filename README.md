@@ -24,14 +24,29 @@ You can do anything you want with this code, but you cannot use it for commercia
 
 # accepted notation
 
-for rounds (also in lower case): `Rounds:` `Round:` `Rnds:` `Rnd:` `Rows:`` Row:` `R:`
+for rounds (also in lower case):
+
+ `Rounds:` 
+`Round:` 
+`Rnds:`
+ `Rnd:` 
+`Rows:`
+` Row:`
+ `R:`
 
 stitch counts: `(30)`, `[30]` 
 
-for stitches (case inventive): `sc, inc, dec, flo, blo, ch, slip knot, slst...` even full names. 
+for stitches (case inventive): 
+
+`sc, inc, dec, flo, blo, ch, slip knot, slst...`
+
+ even full names. 
 
 digits: `6sc`, `sc6`, `6 sc, `sc 6`
-repeated rows: `R 1-10:` and similar, they get expanded for easier tracking.
+
+repeated rows: `R 1-10:` 
+
+and similar, they get expanded for easier tracking.
 
 repeated stitches groups: `()*5` `()x5` `()X5`, square brackets `[]` also work
 groups like these also work `(()*5)*5`
@@ -52,7 +67,9 @@ R1:...
 the sections can have they color changed
 
 ## notes for rows
+
 `5sc # your note comes after the hashtag`
+
 notes can also be added later from tracker view.
 
 ## color 
@@ -65,7 +82,9 @@ R1: (<blu>sc</blu>, inc)*5
 
 ## what has to be transformed by user
 
-`sc all around (30)` and similar such as `inc all around (30)` has to be manually transformed.
+`sc all around (30)` 
+
+and similar such as `inc all around (30)` has to be manually transformed.
 
 `4 times` or `times 4` has to be manually transformed.
 
