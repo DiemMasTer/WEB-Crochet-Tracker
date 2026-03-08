@@ -27,7 +27,249 @@ let projectToDeleteId = null;
 let currentExportFilename = "pattern.txt";
 let currentNodePathForColor = null;
 let currentTargetType = null; 
-let editingSourceLineIndex = null; // Used for row inline editing
+let editingSourceLineIndex = null; 
+
+// --- 1. THE UNIVERSAL TRANSLATION LAYER ---
+const MODIFIER_MAP = {
+  // English
+  'blo': 'blo', 'bl': 'blo', 'flo': 'flo', 'fl': 'flo', 'fp': 'fp', 'bp': 'bp',
+  // German
+  'hmg': 'blo', 'vmg': 'flo', 'vrmg': 'flo',
+  // Spanish
+  'sct': 'blo', 'scd': 'flo',
+  // Italian
+  'slb': 'blo', 'sla': 'flo',
+  // Chinese
+  '只钩内': 'blo', '后半针': 'blo', '只钩外': 'flo', '前半针': 'flo'
+};
+
+const STITCH_MAP = {
+  // --- US English ---
+  'sc': 'sc', 'inc': 'inc', 'dec': 'dec', 'invdec': 'invdec', 'sl st': 'sl st', 'slst': 'sl st', 'hdc': 'hdc', 'dc': 'dc', 'tr': 'tr',
+  // --- Spanish (es) ---
+  'pb': 'sc', 'aum': 'inc', 'dis': 'dec', 'pe': 'sl st', 'pd': 'sl st', 'mpa': 'hdc', 'pa': 'dc', 'pc': 'ch', 'cad': 'ch',
+  // --- German (de) ---
+  'fm': 'sc', 'zun': 'inc', 'abn': 'dec', 'km': 'sl st', 'hstb': 'hdc', 'stb': 'dc', 'lm': 'ch',
+  // --- Italian (it) ---
+  'mb': 'sc', 'aum': 'inc', 'dim': 'dec', 'mbss': 'sl st', 'mma': 'hdc', 'ma': 'dc', 'cat': 'ch',
+  // --- Portuguese (pt) ---
+  'pb': 'sc', 'aum': 'inc', 'dim': 'dec', 'pbx': 'sl st', 'mpa': 'hdc', 'pa': 'dc', 'corr': 'ch',
+  // --- Chinese (zh) & Symbolic ---
+  'x': 'sc', 'v': 'inc', 'w': 'inc3', 'a': 'dec', 'm': 'dec3', 't': 'hdc', 'f': 'dc', 'e': 'tr', 'sl': 'sl st', 'ss': 'sl st', 'ch': 'ch',
+  'n': 'crab st', 'nx': 'bpsc', 'wx': 'fpsc', 'nt': 'bphdc', 'wt': 'fphdc', 'nf': 'bpdc', 'wf': 'fpdc', 
+  'q': 'cluster', 'g': 'popcorn', 'y': 'picot',
+  'tv': 'hdc inc', 'tw': 'hdc inc3', 'fv': 'dc inc', 'fw': 'dc inc3', 
+  'ta': 'hdc dec', 'tm': 'hdc dec3', 'fa': 'dc dec', 'fm': 'dc dec3'
+};
+
+// --- ROW/ROUND PREFIX DICTIONARY ---
+const ROW_PREFIXES = [
+  'Rounds', 'Round', 'Rnds', 'Rnd', 'Rows', 'Row',
+  'Vueltas', 'Vuelta', 'Hileras', 'Hilera',
+  'Runden', 'Runde', 'Reihen', 'Reihe',
+  'Giri', 'Giro', 'Righe', 'Riga',
+  'Voltas', 'Volta', 'Carreiras', 'Carreira', 'Carr',
+  'Rd', 'R', 'V', 'H', 'C', 'G', '第', '圈', '行'
+].join('|');
+
+const PREFIX_NORM_MAP = {
+  'rounds':'Round', 'rnds':'Rnd', 'rows':'Row', 'r':'Row',
+  'vueltas':'Vuelta', 'hileras':'Hilera', 'v':'Vuelta', 'h':'Hilera',
+  'runden':'Runde', 'reihen':'Reihe', 'rd':'Runde',
+  'giri':'Giro', 'righe':'Riga', 'g':'Giro',
+  'voltas':'Volta', 'carreiras':'Carreira', 'carr':'Carreira', 'c':'Carreira',
+  '第': 'Round', '圈': 'Round', '行': 'Row'
+};
+
+// --- 2. DYNAMIC REGEX GENERATION ---
+const dynamicModifiers = Object.keys(MODIFIER_MAP).sort((a, b) => b.length - a.length).join('|');
+
+const BOILERPLATE_REGEX_STRING = `(?:` + [
+  // English
+  `in\\s+(?:each\\s+|every\\s+)?(?:1\\s+)?(?:st|stitch|sts)(?:\\s+all\\s+around|\\s+around)?`, 
+  `(?:each|every)\\s+(?:st|stitch|sts)(?:\\s+all\\s+around|\\s+around)?`,
+  `all\\s+around`, `around`,
+  // Spanish
+  `en\\s+cada\\s+(?:pt|punto|p)(?:\\s+en\\s+toda\\s+la\\s+vuelta|\\s+alrededor)?`,
+  `en\\s+toda\\s+la\\s+vuelta`, `alrededor`, `vuelta`,
+  // German
+  `in\\s+jede\\s+(?:m|masche)(?:\\s+rundherum|\\s+in\\s+der\\s+gesamten\\s+runde)?`,
+  `in\\s+der\\s+gesamten\\s+runde`, `rundherum`, `runde`,
+  // Italian
+  `in\\s+ogni\\s+(?:m|maglia)(?:\\s+attorno|\\s+in\\s+tutto\\s+il\\s+giro)?`,
+  `in\\s+tutto\\s+il\\s+giro`, `attorno`, `giro`,
+  // Portuguese
+  `em\\s+cada\\s+(?:pt|ponto)(?:\\s+na\\s+volta\\s+toda|\\s+ao\\s+redor)?`,
+  `na\\s+volta\\s+toda`, `ao\\s+redor`, `volta`
+].join('|') + `)`;
+
+// --- 3. CORE LOGIC & MATH ENGINE ---
+function getStitchOutputValue(internalStitchToken) {
+  // Dynamically handles w, tw, fw, v, tv, fv math correctly
+  if (internalStitchToken.includes('inc3')) return 3;
+  if (internalStitchToken.includes('inc')) return 2;
+  return 1;
+}
+
+// Recursively calculates the total mathematical stitch output of any sequence
+function getSequenceOutput(str) {
+    let subParts = splitTopLevel(str);
+    let sum = 0;
+    // Modifiers \s* is optional to support Chinese (e.g. 只钩内X) without spaces
+    const tRegex = new RegExp(`^(?:(?<c1>\\d+)\\s*)?(?:(?<mod>${dynamicModifiers})\\s*)?(?:(?<c2>\\d+)\\s*)?(?<st>[a-z][a-z0-9\\s\\-]*)$`, 'i');
+    
+    for (let sp of subParts) {
+        sp = sp.trim();
+        if(!sp) continue;
+        
+        let mMatch = sp.match(/^(.*[\)\]\}])\s*(?:\*|x|X)?\s*(\d+)$/i); // Suffix bracket: (X,V) 6
+        if (!mMatch) {
+            let pMatch = sp.match(/^(\d+)\s*(?:\*|x|X)?\s*([\(\[\{].*[\)\]\}])$/i); // Prefix bracket: 6 (X,V)
+            if (pMatch) mMatch = [pMatch[0], pMatch[2], pMatch[1]]; 
+        }
+        if (!mMatch) mMatch = sp.match(/(.*)\s*(?:\*|x|X)\s*(\d+)$/i); // Explicit * multiplier
+
+        let target = sp;
+        let multi = 1;
+        if (mMatch) {
+            target = mMatch[1].trim();
+            multi = parseInt(mMatch[2], 10);
+        }
+        
+        if ((target.startsWith('(') && target.endsWith(')')) || 
+            (target.startsWith('[') && target.endsWith(']')) || 
+            (target.startsWith('{') && target.endsWith('}'))) {
+            sum += getSequenceOutput(target.slice(1,-1)) * multi;
+        } else {
+            let tm = target.match(tRegex);
+            if (tm && tm.groups) {
+                let c = parseInt(tm.groups.c1 || tm.groups.c2 || 1, 10);
+                let stRaw = tm.groups.st.trim().toLowerCase();
+                let stNorm = STITCH_MAP[stRaw] || stRaw;
+                sum += c * getStitchOutputValue(stNorm) * multi;
+            } else {
+                sum += 1 * multi; 
+            }
+        }
+    }
+    return sum;
+}
+
+function parseInEachSt(input) {
+  const line = input.trim().toLowerCase();
+  
+  const wrapperPatterns = [
+    new RegExp(`^(?<instruction>.+?)\\s*,?\\s*${BOILERPLATE_REGEX_STRING}\\s*,?\\s*[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*$`, 'i'),
+    new RegExp(`^[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*(?<instruction>.+?)\\s*,?\\s*${BOILERPLATE_REGEX_STRING}\\s*$`, 'i'),
+    new RegExp(`^(?<instruction>.+?)\\s*,?\\s*[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*$`, 'i'),
+    new RegExp(`^[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*(?<instruction>.+?)\\s*$`, 'i')
+  ];
+  
+  let match = null;
+  for (const pattern of wrapperPatterns) {
+    match = line.match(pattern);
+    if (match) break;
+  }
+  
+  if (!match || !match.groups) return null;
+  
+  const totalNum = parseInt(match.groups.total, 10);
+  if (isNaN(totalNum)) return null;
+
+  let cleanInst = match.groups.instruction.trim();
+  if (cleanInst.startsWith('(') && cleanInst.endsWith(')')) cleanInst = cleanInst.slice(1, -1);
+  else if (cleanInst.startsWith('[') && cleanInst.endsWith(']')) cleanInst = cleanInst.slice(1, -1);
+
+  const parts = splitTopLevel(cleanInst);
+  const tokens = [];
+  const tokenRegex = new RegExp(`^(?:(?<count1>\\d+)\\s*)?(?:(?<modifier>${dynamicModifiers})\\s*)?(?:(?<count2>\\d+)\\s*)?(?<stitch>[a-z][a-z0-9\\s\\-]*)$`, 'i');
+
+  let sequenceSum = 0;
+
+  for (let part of parts) {
+      part = part.trim();
+      if (!part) continue;
+
+      let cMatch = part.match(/^(\{[\s\S]*?\})(?:\s*(?:\*|x|X)?\s*(\d+))?$/i); // Suffix cluster multi
+      if (cMatch && !cMatch[2]) {
+          let altMatch = part.match(/^(\d+)\s*(?:\*|x|X)?\s*(\{[\s\S]*?\})$/i); // Prefix cluster multi
+          if (altMatch) cMatch = [altMatch[0], altMatch[2], altMatch[1]];
+      }
+      
+      if (cMatch) {
+          let clusterText = cMatch[1];
+          let clusterMulti = cMatch[2] ? parseInt(cMatch[2], 10) : 1;
+          
+          let sum = getSequenceOutput(clusterText) * clusterMulti;
+          if (sum === 0) return null;
+          sequenceSum += sum;
+          
+          let textOut = clusterMulti > 1 ? `${clusterText} * ${clusterMulti}` : clusterText;
+          tokens.push({ type: 'cluster', text: textOut });
+      } else {
+          let tMatch = part.match(tokenRegex);
+          if (!tMatch || !tMatch.groups) return null;
+          
+          let count = parseInt(tMatch.groups.count1 || tMatch.groups.count2 || 1, 10);
+          let rawStitch = tMatch.groups.stitch.trim();
+          let rawMod = tMatch.groups.modifier ? tMatch.groups.modifier.trim() : null;
+          let normStitch = STITCH_MAP[rawStitch.toLowerCase()] || rawStitch.toLowerCase();
+          
+          sequenceSum += count * getStitchOutputValue(normStitch);
+          
+          tokens.push({ 
+              type: 'stitch', 
+              count: count, 
+              originalModifier: rawMod,
+              originalStitch: rawStitch
+          });
+      }
+  }
+
+  if (sequenceSum === 0 || totalNum % sequenceSum !== 0) return null; 
+  
+  const multiplier = totalNum / sequenceSum;
+  
+  if (multiplier === 1) {
+      return tokens.map(t => {
+          if (t.type === 'cluster') return t.text;
+          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+          return t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+      }).join(', ');
+  } else {
+      if (tokens.length === 1) {
+          let t = tokens[0];
+          if (t.type === 'cluster') return `${t.text} * ${multiplier}`;
+          
+          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+          if (t.count === 1) return `${multiplier} ${modPrefix}${t.originalStitch}`.trim();
+          else return `(${t.count} ${modPrefix}${t.originalStitch}) * ${multiplier}`;
+      }
+      
+      const seqStr = tokens.map(t => {
+          if (t.type === 'cluster') return t.text;
+          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+          return t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+      }).join(', ');
+      
+      return `(${seqStr}) * ${multiplier}`;
+  }
+}
+
+// Linguistic normalizer for written multipliers ("times", "veces", etc)
+function normalizeMultipliers(text) {
+    const MULTIPLIER_WORDS = ['times', 'veces', 'mal', 'volte', 'vezes'].join('|');
+    const REPEAT_WORDS = ['repeat', 'rep', 'repetir', 'repete', 'wiederhole', 'wiederholen', 'wdh', 'ripeti', 'ripetere', 'repita'].join('|');
+
+    let res = text;
+    res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(\\d+)\\s*(?:${MULTIPLIER_WORDS})\\b`, 'gi'), '* $1');
+    res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(?:${MULTIPLIER_WORDS})\\s*(\\d+)\\b`, 'gi'), '* $1');
+    
+    // Safely convert 'x' to multiplier only if grouped with a repeat word (avoids breaking Chinese X)
+    res = res.replace(new RegExp(`\\b(?:${REPEAT_WORDS})\\s+(\\d+)\\s*x\\b`, 'gi'), '* $1');
+    return res;
+}
+// --- END UNIVERSAL TRANSLATION LAYER ---
 
 function saveData() {
     localStorage.setItem('crochetProjects', JSON.stringify(projects));
@@ -52,11 +294,9 @@ function transferProgress(oldNodes, newNodes) {
     }
 }
 
-// --- The Fuzz: Smart Progress Transfer ---
 function syncProjectProgress(oldRows, newRows) {
     let consumed = new Set();
     
-    // Pass 1: Strict matching by exact text (handles inserted/deleted rows perfectly)
     newRows.forEach((newRow, rIdx) => {
         let searchIndices = [rIdx, rIdx - 1, rIdx + 1, rIdx - 2, rIdx + 2];
         for (let i of searchIndices) {
@@ -71,7 +311,6 @@ function syncProjectProgress(oldRows, newRows) {
         }
     });
 
-    // Pass 2: Fallback for color tags / inline edits at the exact same index
     newRows.forEach((newRow, rIdx) => {
         if (!newRow._matched) {
             let oldRow = oldRows[rIdx];
@@ -81,7 +320,7 @@ function syncProjectProgress(oldRows, newRows) {
                 consumed.add(rIdx);
             }
         }
-        delete newRow._matched; // clean up temp property
+        delete newRow._matched; 
     });
 }
 
@@ -288,7 +527,7 @@ function applyNodeColor(colorTag) {
         if (sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
             let originalLine = lines[sourceIdx];
             
-            let prefixMatch = originalLine.match(/^\s*(?:(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*\d+\s*-\s*(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*\d+|(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*|\d+)[.:-]+\s*/i);
+            let prefixMatch = originalLine.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[.:-]+\\s*`, 'i'));
             let prefix = prefixMatch ? prefixMatch[0] : "";
             
             let hashIdx = originalLine.indexOf('#');
@@ -370,7 +609,6 @@ function saveRowEdit() {
     }
 }
 
-
 // --- Parser Engine ---
 function splitTopLevel(str) {
     let result = [], current = '', depth = 0;
@@ -407,12 +645,19 @@ function parsePart(str, inheritedColor = null) {
         str = colorMatch[2].trim();
     }
 
-    let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X)\s*(\d+)$/i);
+    // Bracket Multiplier checks (Suffix then Prefix)
+    let groupMatch = str.match(/^[\(\[]([\s\S]*)[\)\]]\s*(?:\*|x|X)?\s*(\d+)$/i); // Suffix: (X,V) 6
+    if (!groupMatch) {
+        let pMatch = str.match(/^(\d+)\s*(?:\*|x|X)?\s*[\(\[]([\s\S]*)[\)\]]$/i); // Prefix: 6 (X,V)
+        if (pMatch) groupMatch = [pMatch[0], pMatch[2], pMatch[1]];
+    }
+
     if (groupMatch) {
         return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     }
     
-    let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
+    // Standalone Group without multiplier
+    let groupMatchNoMulti = str.match(/^[\(\[]([\s\S]*)[\)\]]$/i);
     if (groupMatchNoMulti) {
         return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
     }
@@ -420,11 +665,14 @@ function parsePart(str, inheritedColor = null) {
     let max = 1;
     let text = str;
 
+    // Explicit non-bracket multipliers (e.g. sc * 6)
     let multiMatch = text.match(/(.*)\s*(?:\*|x|X)\s*(\d+)$/i);
+
     if (multiMatch) {
         max = parseInt(multiMatch[2], 10);
         text = multiMatch[1].trim();
     } else {
+        // Standard counts (6X, 6 sc, sc 6, sc6)
         let startMatch = text.match(/^(\d+)\s*(.*)$/);
         if (startMatch) {
             max = parseInt(startMatch[1], 10);
@@ -457,16 +705,15 @@ function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n');
     let expandedLines = [];
 
-    const rangeRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)\s*-\s*(?:Rounds|Round|Rnds|Rnd|Rows|Row|R)?\s*(\d+)[\s.:-]+(.+)$/i;
+    const rangeRegex = new RegExp(`^\\s*(${ROW_PREFIXES})?\\s*(\\d+)\\s*-\\s*(?:${ROW_PREFIXES})?\\s*(\\d+)[\\s.:-]+(.+)$`, 'i');
 
     rawLines.forEach((line, idx) => {
         if (line.trim().length === 0) return;
         let match = line.match(rangeRegex);
         if (match) {
-            let prefixStr = match[1] || 'R';
-            prefixStr = prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase();
-            if (prefixStr.endsWith('s')) prefixStr = prefixStr.slice(0, -1);
-            if (prefixStr === 'R') prefixStr = 'Row'; 
+            let prefixStr = match[1] || 'Row';
+            let lowerPrefix = prefixStr.toLowerCase();
+            prefixStr = PREFIX_NORM_MAP[lowerPrefix] || (prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase());
 
             let space = ' '; 
             let start = parseInt(match[2], 10);
@@ -491,7 +738,7 @@ function processPatternIntoRows(patternText) {
         let trimmedLine = line.trim();
         let cleanLine = trimmedLine.replace(/<.*?>/g, '').trim();
 
-        let rowPrefixRegex = /^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)(?:[\s\d.:-]|$)/i;
+        let rowPrefixRegex = new RegExp(`^\\s*(${ROW_PREFIXES})(?:[\\s\\d.:-]|$)`, 'i');
         let hasDigits = /\d/.test(cleanLine);
 
         if (!hasDigits && !rowPrefixRegex.test(cleanLine)) {
@@ -532,18 +779,40 @@ function processPatternIntoRows(patternText) {
             line = line.substring(0, hashIdx).trim(); 
         }
 
-        let pm = line.match(/^\s*(Rounds|Round|Rnds|Rnd|Rows|Row|R)/i);
+        let pm = line.match(new RegExp(`^\\s*(第\\s*\\d+\\s*[圈行]|${ROW_PREFIXES})`, 'i'));
         let rowPrefix = pm ? pm[1] : 'Row';
-        rowPrefix = rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase();
-        if (rowPrefix.endsWith('s')) rowPrefix = rowPrefix.slice(0, -1);
-        if (rowPrefix === 'R') rowPrefix = 'Row'; 
+        let lowerPrefix = rowPrefix.toLowerCase();
+        rowPrefix = PREFIX_NORM_MAP[lowerPrefix] || (rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase());
 
-        cleanLine = line.replace(/^\s*((?:Rounds|Round|Rnds|Rnd|Rows|Row|R)\s*\d*[.:-]?\s*|\d+[.:-]+\s*)/i, '');
+        // Safely strip English and Chinese prefix formatting
+        let instructionPart = line.replace(new RegExp(`^\\s*(?:第?\\s*\\d+\\s*[圈行][\\s.:-]*|(?:${ROW_PREFIXES})\\s*\\d*[\\s.:-]*|\\d+[\\s.:-]+)`, 'i'), '');
+        cleanLine = instructionPart;
         
-        let totalRegex = /\s*([\[\(\{]\s*\d+\s*(?:sts|sc|hdc|dc|tr|st)?\s*[\]\)\}])\s*$/i;
+        cleanLine = normalizeMultipliers(cleanLine);
+        
+        let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
         let totalMatch = cleanLine.match(totalRegex);
         let rowTotalStr = totalMatch ? totalMatch[1] : "";
-        cleanLine = cleanLine.replace(totalRegex, '');
+        
+        let sanitized = null;
+        let coreWithoutTotal = cleanLine.replace(totalRegex, '').trim();
+        let tagMatch = coreWithoutTotal.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
+        
+        if (tagMatch) {
+            let innerText = tagMatch[2] + (totalMatch ? " " + totalMatch[0] : "");
+            let innerSanitized = parseInEachSt(innerText);
+            if (innerSanitized) {
+                sanitized = `<${tagMatch[1]}>${innerSanitized}</${tagMatch[1]}>`;
+            }
+        } else if (!/<\/?[a-zA-Z]+>/.test(cleanLine)) {
+            sanitized = parseInEachSt(cleanLine);
+        }
+
+        if (sanitized) {
+            cleanLine = sanitized;
+        } else {
+            cleanLine = coreWithoutTotal;
+        }
         
         cleanLine = distributeColorTags(cleanLine);
 
@@ -551,6 +820,7 @@ function processPatternIntoRows(patternText) {
 
         finalRows.push({
             originalText: line, 
+            instructionText: instructionPart, 
             nodes: nodes,
             blockNote: currentBlockNote ? currentBlockNote.text : null,
             blockNoteColor: currentBlockNote ? currentBlockNote.color : null,
@@ -952,7 +1222,10 @@ function renderRowList(proj) {
             noteBadge = `<span style="font-size: 11px; background: var(--tracker-bg); ${borderStyle} padding: 3px 6px; border-radius: 6px; margin-right: 8px;">${row.blockNote}</span>`;
         }
         
-        let visualText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
+        let prefix = row.rowPrefix || 'Row';
+        let dNum = row.displayIndex !== undefined ? row.displayIndex : (idx + 1);
+        let vText = (row.instructionText || row.originalText).replace(/<\/?[a-zA-Z]+>/gi, '');
+        let displayStr = `${prefix} ${dNum}: ${vText}`;
 
         let editBtn = `
             <span class="action-icon" style="color:var(--text-muted); padding:4px;" onclick="event.stopPropagation(); openRowEditModal(${idx});" title="Edit row">
@@ -964,7 +1237,7 @@ function renderRowList(proj) {
 
         div.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <span>${noteBadge}${visualText}</span>
+                <span>${noteBadge}${displayStr}</span>
                 ${editBtn}
             </div> 
             <span>${progressStr}</span>`;
@@ -1032,7 +1305,7 @@ function refreshTrackerUI() {
     if (prefix === 'R') prefix = 'Row';
 
     document.getElementById('track-row-name').innerText = `${prefix} ${displayNum}`;
-    document.getElementById('track-pattern-text').innerText = row.originalText.replace(/<\/?[a-zA-Z]+>/gi, '');
+    document.getElementById('track-pattern-text').innerText = (row.instructionText || row.originalText).replace(/<\/?[a-zA-Z]+>/gi, '');
 
     let noteContainer = document.getElementById('track-block-note');
     if (row.blockNote) {
