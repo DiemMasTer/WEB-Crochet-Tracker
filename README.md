@@ -13,7 +13,7 @@ You can do anything you want with this code, but you cannot use it/modify it for
 
 
 # features, overview 
-- **track** your projects, **count** your stitches
+- **track** your projects, **count** your stitches (with photos)
 - **write** the pattern or **paste** it
 - **save** your data in your browser automatically, **export** it, **import** it
 - two themes: "midnight" and "grey scale"
