@@ -1,7 +1,7 @@
 
 
-Welcome to [TrackAmi](diemmaster.github.io/TrackAmi/), your
-Amigurumi WEB based tracker! (And counter) 
+Welcome to [TrackAmi](https://diemmaster.github.io/TrackAmi/), your
+Amigurumi WEB based tracker! (progressterr counter) 
 
 This is a simple tool that shouldn't raise safety concerns as it saves progress in YOUR browser
 
