@@ -159,8 +159,8 @@ button:hover { filter: brightness(1.2); }
 /* Grid for Projects */
 .project-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
 }
 
 .project-tassel {
@@ -233,10 +233,10 @@ button:hover { filter: brightness(1.2); }
 .action-icon.edit-row:hover { color: var(--btn-hover); }
 
 /* Photo Grid */
-.project-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr); /* Changed from 3 to 2 */
-    gap: 12px; /* Slightly increased gap for better spacing */
+.photo-grid {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
 }
 
 .photo-slot {
