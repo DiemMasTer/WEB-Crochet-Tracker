@@ -251,7 +251,7 @@ button:hover { filter: brightness(1.2); }
     position: relative;
     overflow: hidden;
     background-size: contain;
-    contain: no-repeat;
+    background-repeat: no-repeat;
     background-position: center;
 }
 
