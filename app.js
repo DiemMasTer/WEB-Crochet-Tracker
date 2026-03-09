@@ -18,43 +18,215 @@ function updateThemeIcon(theme) {
     if (btn) btn.innerText = theme === 'midnight' ? '🌙' : '⚫';
 }
 
-// --- Data Management & Upgrades ---
-let projects = JSON.parse(localStorage.getItem('crochetProjects')) || [];
+// --- Data Management & IndexedDB ---
+let projects = [];
+let db;
 let currentProjectId = null;
 let currentRowIndex = 0;
 
 let projectToDeleteId = null;
+let photoToDeleteContext = null;
 let currentExportFilename = "pattern.txt";
 let currentNodePathForColor = null;
 let currentTargetType = null; 
 let editingSourceLineIndex = null; 
+let tempAddPhotos = [null, null, null];
+let currentPhotoContext = { type: 'add', index: 0 };
+
+function initDB() {
+    return new Promise((resolve, reject) => {
+        let req = indexedDB.open("CrochetAppDB", 1);
+        req.onupgradeneeded = (e) => {
+            let localDb = e.target.result;
+            if (!localDb.objectStoreNames.contains('projects')) {
+                localDb.createObjectStore('projects', { keyPath: 'id' });
+            }
+        };
+        req.onsuccess = (e) => {
+            db = e.target.result;
+            loadProjectsFromDB().then(() => {
+                migrateLocalStorage();
+                resolve();
+            });
+        };
+        req.onerror = () => reject("Failed to load IndexedDB");
+    });
+}
+
+function loadProjectsFromDB() {
+    return new Promise((resolve) => {
+        let tx = db.transaction('projects', 'readonly');
+        let store = tx.objectStore('projects');
+        let req = store.getAll();
+        req.onsuccess = () => {
+            projects = req.result || [];
+            projects.forEach(p => { if(!p.images) p.images = [null, null, null]; });
+            resolve();
+        };
+    });
+}
+
+function saveData() {
+    if (!db) return;
+    let tx = db.transaction('projects', 'readwrite');
+    let store = tx.objectStore('projects');
+    store.clear(); 
+    projects.forEach(p => store.put(p));
+}
+
+function migrateLocalStorage() {
+    let oldData = localStorage.getItem('crochetProjects');
+    if (oldData) {
+        try {
+            let parsed = JSON.parse(oldData);
+            parsed.forEach(p => {
+                if (!p.images) p.images = [null, null, null];
+                if (!projects.find(ext => ext.id === p.id)) {
+                    projects.push(p);
+                }
+            });
+            saveData();
+            localStorage.removeItem('crochetProjects');
+        } catch(e) {}
+    }
+}
+
+// App Initialization
+window.onload = () => {
+    loadTheme();
+    renderColorToolbars();
+    renderNodeColorPicker();
+    initDB().then(() => {
+        renderProjectList();
+    });
+};
+
+// --- Images & Photos Engine ---
+function triggerPhotoUpload(type, index) {
+    currentPhotoContext = { type, index };
+    document.getElementById('hidden-photo-input').click();
+}
+
+function handlePhotoSelected(event) {
+    let file = event.target.files[0];
+    if (!file) return;
+    compressImage(file, (dataUrl) => {
+        if (currentPhotoContext.type === 'add') {
+            tempAddPhotos[currentPhotoContext.index] = dataUrl;
+            renderAddPhotos();
+        } else if (currentPhotoContext.type === 'edit') {
+            let proj = projects.find(p => p.id === currentProjectId);
+            proj.images[currentPhotoContext.index] = dataUrl;
+            saveData();
+            renderEditPhotos(proj);
+        }
+    });
+    event.target.value = '';
+}
+
+function compressImage(file, callback) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let ctx = canvas.getContext('2d');
+            
+            let maxW = 800; let maxH = 800;
+            let width = img.width; let height = img.height;
+            if (width > height) {
+                if (width > maxW) { height = Math.round(height * (maxW / width)); width = maxW; }
+            } else {
+                if (height > maxH) { width = Math.round(width * (maxH / height)); height = maxH; }
+            }
+            canvas.width = width; canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            let quality = 0.9;
+            let dataUrl = canvas.toDataURL('image/jpeg', quality);
+            
+            // Compress till ~500kb (base64 size calculation)
+            while (dataUrl.length * 0.75 > 500 * 1024 && quality > 0.1) {
+                quality -= 0.1;
+                dataUrl = canvas.toDataURL('image/jpeg', quality);
+            }
+            callback(dataUrl);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function promptDeletePhoto(type, index, event) {
+    event.stopPropagation();
+    photoToDeleteContext = { type, index };
+    document.getElementById('photo-delete-modal').style.display = 'flex';
+}
+
+document.getElementById('btn-confirm-photo-delete').addEventListener('click', () => {
+    if (photoToDeleteContext) {
+        if (photoToDeleteContext.type === 'add') {
+            tempAddPhotos[photoToDeleteContext.index] = null;
+            renderAddPhotos();
+        } else if (photoToDeleteContext.type === 'edit') {
+            let proj = projects.find(p => p.id === currentProjectId);
+            proj.images[photoToDeleteContext.index] = null;
+            saveData();
+            renderEditPhotos(proj);
+        }
+        closeModal('photo-delete-modal');
+    }
+});
+
+function openImageModal(dataUrl) {
+    if(!dataUrl) return;
+    document.getElementById('enlarged-image').src = dataUrl;
+    document.getElementById('image-modal').style.display = 'flex';
+}
+
+function buildPhotoHTML(dataUrl, type, index) {
+    if (dataUrl) {
+        return `
+            <div class="photo-slot" style="background-image: url('${dataUrl}')" onclick="openImageModal('${dataUrl}')">
+                <div class="photo-controls" onclick="event.stopPropagation()">
+                    <button onclick="triggerPhotoUpload('${type}', ${index})">📁</button>
+                    <button onclick="promptDeletePhoto('${type}', ${index}, event)">✕</button>
+                </div>
+            </div>`;
+    } else {
+        return `
+            <div class="photo-slot" onclick="triggerPhotoUpload('${type}', ${index})">
+                <div class="photo-slot-empty">+</div>
+            </div>`;
+    }
+}
+
+function renderAddPhotos() {
+    let container = document.getElementById('new-photo-grid');
+    container.innerHTML = tempAddPhotos.map((url, i) => buildPhotoHTML(url, 'add', i)).join('');
+}
+
+function renderEditPhotos(proj) {
+    let container = document.getElementById('edit-photo-grid');
+    container.innerHTML = (proj.images || [null,null,null]).map((url, i) => buildPhotoHTML(url, 'edit', i)).join('');
+}
+
 
 // --- 1. THE UNIVERSAL TRANSLATION LAYER ---
 const MODIFIER_MAP = {
-  // English
   'blo': 'blo', 'bl': 'blo', 'flo': 'flo', 'fl': 'flo', 'fp': 'fp', 'bp': 'bp',
-  // German
   'hmg': 'blo', 'vmg': 'flo', 'vrmg': 'flo',
-  // Spanish
   'sct': 'blo', 'scd': 'flo',
-  // Italian
   'slb': 'blo', 'sla': 'flo',
-  // Chinese
   '只钩内': 'blo', '后半针': 'blo', '只钩外': 'flo', '前半针': 'flo'
 };
 
 const STITCH_MAP = {
-  // --- US English ---
   'sc': 'sc', 'inc': 'inc', 'dec': 'dec', 'invdec': 'invdec', 'sl st': 'sl st', 'slst': 'sl st', 'hdc': 'hdc', 'dc': 'dc', 'tr': 'tr',
-  // --- Spanish (es) ---
   'pb': 'sc', 'aum': 'inc', 'dis': 'dec', 'pe': 'sl st', 'pd': 'sl st', 'mpa': 'hdc', 'pa': 'dc', 'pc': 'ch', 'cad': 'ch',
-  // --- German (de) ---
   'fm': 'sc', 'zun': 'inc', 'abn': 'dec', 'km': 'sl st', 'hstb': 'hdc', 'stb': 'dc', 'lm': 'ch',
-  // --- Italian (it) ---
   'mb': 'sc', 'aum': 'inc', 'dim': 'dec', 'mbss': 'sl st', 'mma': 'hdc', 'ma': 'dc', 'cat': 'ch',
-  // --- Portuguese (pt) ---
-  'pb': 'sc', 'aum': 'inc', 'dim': 'dec', 'pbx': 'sl st', 'mpa': 'hdc', 'pa': 'dc', 'corr': 'ch',
-  // --- Chinese (zh) & Symbolic ---
+  'pbx': 'sl st', 'corr': 'ch',
   'x': 'sc', 'v': 'inc', 'w': 'inc3', 'a': 'dec', 'm': 'dec3', 't': 'hdc', 'f': 'dc', 'e': 'tr', 'sl': 'sl st', 'ss': 'sl st', 'ch': 'ch',
   'n': 'crab st', 'nx': 'bpsc', 'wx': 'fpsc', 'nt': 'bphdc', 'wt': 'fphdc', 'nf': 'bpdc', 'wf': 'fpdc', 
   'q': 'cluster', 'g': 'popcorn', 'y': 'picot',
@@ -62,7 +234,6 @@ const STITCH_MAP = {
   'ta': 'hdc dec', 'tm': 'hdc dec3', 'fa': 'dc dec', 'fm': 'dc dec3'
 };
 
-// --- ROW/ROUND PREFIX DICTIONARY ---
 const ROW_PREFIXES = [
   'Rounds', 'Round', 'Rnds', 'Rnd', 'Rows', 'Row',
   'Vueltas', 'Vuelta', 'Hileras', 'Hilera',
@@ -81,29 +252,22 @@ const PREFIX_NORM_MAP = {
   '第': 'Round', '圈': 'Round', '行': 'Row'
 };
 
-// --- 2. DYNAMIC REGEX GENERATION ---
 const dynamicModifiers = Object.keys(MODIFIER_MAP).sort((a, b) => b.length - a.length).join('|');
 
 const BOILERPLATE_REGEX_STRING = `(?:` + [
-  // English
   `in\\s+(?:each\\s+|every\\s+)?(?:1\\s+)?(?:st|stitch|sts)(?:\\s+all\\s+around|\\s+around)?`, 
   `(?:each|every)\\s+(?:st|stitch|sts)(?:\\s+all\\s+around|\\s+around)?`,
   `all\\s+around`, `around`,
-  // Spanish
   `en\\s+cada\\s+(?:pt|punto|p)(?:\\s+en\\s+toda\\s+la\\s+vuelta|\\s+alrededor)?`,
   `en\\s+toda\\s+la\\s+vuelta`, `alrededor`, `vuelta`,
-  // German
   `in\\s+jede\\s+(?:m|masche)(?:\\s+rundherum|\\s+in\\s+der\\s+gesamten\\s+runde)?`,
   `in\\s+der\\s+gesamten\\s+runde`, `rundherum`, `runde`,
-  // Italian
   `in\\s+ogni\\s+(?:m|maglia)(?:\\s+attorno|\\s+in\\s+tutto\\s+il\\s+giro)?`,
   `in\\s+tutto\\s+il\\s+giro`, `attorno`, `giro`,
-  // Portuguese
   `em\\s+cada\\s+(?:pt|ponto)(?:\\s+na\\s+volta\\s+toda|\\s+ao\\s+redor)?`,
   `na\\s+volta\\s+toda`, `ao\\s+redor`, `volta`
 ].join('|') + `)`;
 
-// --- 3. CORE LOGIC & MATH ENGINE ---
 function getStitchOutputValue(internalStitchToken) {
   if (internalStitchToken.includes('inc3')) return 3;
   if (internalStitchToken.includes('inc')) return 2;
@@ -118,21 +282,15 @@ function getSequenceOutput(str) {
     for (let sp of subParts) {
         sp = sp.trim();
         if(!sp) continue;
-        
         let mMatch = sp.match(/^(.*[\)\]\}])\s*(?:\*|x|X)?\s*(\d+)$/i);
         if (!mMatch) {
             let pMatch = sp.match(/^(\d+)\s*(?:\*|x|X)?\s*([\(\[\{].*[\)\]\}])$/i);
             if (pMatch) mMatch = [pMatch[0], pMatch[2], pMatch[1]]; 
         }
         if (!mMatch) mMatch = sp.match(/(.*)\s*(?:\*|x|X)\s*(\d+)$/i);
-
         let target = sp;
         let multi = 1;
-        if (mMatch) {
-            target = mMatch[1].trim();
-            multi = parseInt(mMatch[2], 10);
-        }
-        
+        if (mMatch) { target = mMatch[1].trim(); multi = parseInt(mMatch[2], 10); }
         if ((target.startsWith('(') && target.endsWith(')')) || 
             (target.startsWith('[') && target.endsWith(']')) || 
             (target.startsWith('{') && target.endsWith('}'))) {
@@ -144,9 +302,7 @@ function getSequenceOutput(str) {
                 let stRaw = tm.groups.st.trim().toLowerCase();
                 let stNorm = STITCH_MAP[stRaw] || stRaw;
                 sum += c * getStitchOutputValue(stNorm) * multi;
-            } else {
-                sum += 1 * multi; 
-            }
+            } else sum += 1 * multi; 
         }
     }
     return sum;
@@ -154,79 +310,53 @@ function getSequenceOutput(str) {
 
 function parseInEachSt(input) {
   const line = input.trim().toLowerCase();
-  
   const wrapperPatterns = [
     new RegExp(`^(?<instruction>.+?)\\s*,?\\s*${BOILERPLATE_REGEX_STRING}\\s*,?\\s*[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*$`, 'i'),
     new RegExp(`^[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*(?<instruction>.+?)\\s*,?\\s*${BOILERPLATE_REGEX_STRING}\\s*$`, 'i'),
     new RegExp(`^(?<instruction>.+?)\\s*,?\\s*[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*$`, 'i'),
     new RegExp(`^[\\[\\(]\\s*(?<total>\\d+)[a-z\\s]*[\\]\\)]\\s*(?<instruction>.+?)\\s*$`, 'i')
   ];
-  
   let match = null;
-  for (const pattern of wrapperPatterns) {
-    match = line.match(pattern);
-    if (match) break;
-  }
-  
+  for (const pattern of wrapperPatterns) { match = line.match(pattern); if (match) break; }
   if (!match || !match.groups) return null;
-  
   const totalNum = parseInt(match.groups.total, 10);
   if (isNaN(totalNum)) return null;
-
   let cleanInst = match.groups.instruction.trim();
   if (cleanInst.startsWith('(') && cleanInst.endsWith(')')) cleanInst = cleanInst.slice(1, -1);
   else if (cleanInst.startsWith('[') && cleanInst.endsWith(']')) cleanInst = cleanInst.slice(1, -1);
-
   const parts = splitTopLevel(cleanInst);
   const tokens = [];
   const tokenRegex = new RegExp(`^(?:(?<count1>\\d+)\\s*)?(?:(?<modifier>${dynamicModifiers})\\s*)?(?:(?<count2>\\d+)\\s*)?(?<stitch>[a-z][a-z0-9\\s\\-]*)$`, 'i');
-
   let sequenceSum = 0;
-
   for (let part of parts) {
       part = part.trim();
       if (!part) continue;
-
       let cMatch = part.match(/^(\{[\s\S]*?\})(?:\s*(?:\*|x|X)?\s*(\d+))?$/i);
       if (cMatch && !cMatch[2]) {
           let altMatch = part.match(/^(\d+)\s*(?:\*|x|X)?\s*(\{[\s\S]*?\})$/i);
           if (altMatch) cMatch = [altMatch[0], altMatch[2], altMatch[1]];
       }
-      
       if (cMatch) {
           let clusterText = cMatch[1];
           let clusterMulti = cMatch[2] ? parseInt(cMatch[2], 10) : 1;
-          
           let sum = getSequenceOutput(clusterText) * clusterMulti;
           if (sum === 0) return null;
           sequenceSum += sum;
-          
           let textOut = clusterMulti > 1 ? `${clusterText} * ${clusterMulti}` : clusterText;
           tokens.push({ type: 'cluster', text: textOut });
       } else {
           let tMatch = part.match(tokenRegex);
           if (!tMatch || !tMatch.groups) return null;
-          
           let count = parseInt(tMatch.groups.count1 || tMatch.groups.count2 || 1, 10);
           let rawStitch = tMatch.groups.stitch.trim();
           let rawMod = tMatch.groups.modifier ? tMatch.groups.modifier.trim() : null;
           let normStitch = STITCH_MAP[rawStitch.toLowerCase()] || rawStitch.toLowerCase();
-          
           sequenceSum += count * getStitchOutputValue(normStitch);
-          
-          tokens.push({ 
-              type: 'stitch', 
-              count: count, 
-              originalModifier: rawMod,
-              originalStitch: rawStitch
-          });
+          tokens.push({ type: 'stitch', count: count, originalModifier: rawMod, originalStitch: rawStitch });
       }
   }
-
   if (sequenceSum === 0 || totalNum % sequenceSum !== 0) return null; 
-  
   const multiplier = totalNum / sequenceSum;
-  
   if (multiplier === 1) {
       return tokens.map(t => {
           if (t.type === 'cluster') return t.text;
@@ -237,18 +367,15 @@ function parseInEachSt(input) {
       if (tokens.length === 1) {
           let t = tokens[0];
           if (t.type === 'cluster') return `${t.text} * ${multiplier}`;
-          
           const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
           if (t.count === 1) return `${multiplier} ${modPrefix}${t.originalStitch}`.trim();
           else return `(${t.count} ${modPrefix}${t.originalStitch}) * ${multiplier}`;
       }
-      
       const seqStr = tokens.map(t => {
           if (t.type === 'cluster') return t.text;
           const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
           return t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
       }).join(', ');
-      
       return `(${seqStr}) * ${multiplier}`;
   }
 }
@@ -256,7 +383,6 @@ function parseInEachSt(input) {
 function normalizeMultipliers(text) {
     const MULTIPLIER_WORDS = ['times', 'veces', 'mal', 'volte', 'vezes'].join('|');
     const REPEAT_WORDS = ['repeat', 'rep', 'repetir', 'repete', 'wiederhole', 'wiederholen', 'wdh', 'ripeti', 'ripetere', 'repita'].join('|');
-
     let res = text;
     res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(\\d+)\\s*(?:${MULTIPLIER_WORDS})\\b`, 'gi'), '* $1');
     res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(?:${MULTIPLIER_WORDS})\\s*(\\d+)\\b`, 'gi'), '* $1');
@@ -264,13 +390,7 @@ function normalizeMultipliers(text) {
     return res;
 }
 
-function saveData() {
-    localStorage.setItem('crochetProjects', JSON.stringify(projects));
-}
-
-function closeModal(id) {
-    document.getElementById(id).style.display = 'none';
-}
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
 function transferProgress(oldNodes, newNodes) {
     if (!oldNodes || !newNodes || oldNodes.length !== newNodes.length) return;
@@ -289,7 +409,6 @@ function transferProgress(oldNodes, newNodes) {
 
 function syncProjectProgress(oldRows, newRows) {
     let consumed = new Set();
-    
     newRows.forEach((newRow, rIdx) => {
         let searchIndices = [rIdx, rIdx - 1, rIdx + 1, rIdx - 2, rIdx + 2];
         for (let i of searchIndices) {
@@ -303,7 +422,6 @@ function syncProjectProgress(oldRows, newRows) {
             }
         }
     });
-
     newRows.forEach((newRow, rIdx) => {
         if (!newRow._matched) {
             let oldRow = oldRows[rIdx];
@@ -317,93 +435,61 @@ function syncProjectProgress(oldRows, newRows) {
     });
 }
 
-let needsSave = false;
-
 function migrateProject(proj) {
     let changed = false;
     if (proj.notes === undefined) { proj.notes = ""; changed = true; }
-    
-    // Legacy migration logic removed for brevity to protect space as per instructions, 
-    // it triggers automatically on reload anyway if missing.
+    if (!proj.images) { proj.images = [null,null,null]; changed = true; }
     if (proj.patternText) {
         let freshRows = processPatternIntoRows(proj.patternText);
         syncProjectProgress(proj.rows, freshRows);
-
         if (JSON.stringify(proj.rows) !== JSON.stringify(freshRows)) {
-            proj.rows = freshRows;
-            changed = true;
+            proj.rows = freshRows; changed = true;
         }
     }
     return changed;
 }
 
-projects.forEach(p => { if (migrateProject(p)) needsSave = true; });
-if (needsSave) saveData();
-
-// --- Color Toolbar & Assignments ---
+// Color Toolbar & Assignments
 const PALETTE = [
-    { name: 'Black', color: 'black', tag: 'bla' },
-    { name: 'White', color: 'white', tag: 'w' },
-    { name: 'Light Yellow', color: '#FFFAA0', tag: 'ly' },
-    { name: 'Yellow', color: '#FFFF00', tag: 'y' },
-    { name: 'Light Orange', color: '#FFD580', tag: 'lo' },
-    { name: 'Orange', color: '#FFAC1C', tag: 'o' },
-    { name: 'Light Red', color: '#FF7276', tag: 'lr' },
-    { name: 'Red', color: '#FF0000', tag: 'r' },
-    { name: 'Light Pink', color: '#F5DADF', tag: 'lpin' },
-    { name: 'Pink', color: '#FFC0CB', tag: 'pin' },
-    { name: 'Light Purple', color: '#E0B0FF', tag: 'lpu' },
-    { name: 'Purple', color: '#DA70D6', tag: 'pu' },
-    { name: 'Light Blue', color: '#89CFF0', tag: 'lblu' },
-    { name: 'Blue', color: '#0000FF', tag: 'blu' },
-    { name: 'Light Green', color: '#90EE90', tag: 'lgr' },
-    { name: 'Green', color: '#4CBB17', tag: 'gr' },
-    { name: 'Light Brown', color: '#C19A6B', tag: 'lbro' },
-    { name: 'Brown', color: '#7B3F00', tag: 'bro' },
-    { name: 'Light Grey', color: '#D3D3D3', tag: 'lgre' },
-    { name: 'Grey', color: '#899499', tag: 'gre' }
+    { name: 'Black', color: 'black', tag: 'bla' }, { name: 'White', color: 'white', tag: 'w' },
+    { name: 'Light Yellow', color: '#FFFAA0', tag: 'ly' }, { name: 'Yellow', color: '#FFFF00', tag: 'y' },
+    { name: 'Light Orange', color: '#FFD580', tag: 'lo' }, { name: 'Orange', color: '#FFAC1C', tag: 'o' },
+    { name: 'Light Red', color: '#FF7276', tag: 'lr' }, { name: 'Red', color: '#FF0000', tag: 'r' },
+    { name: 'Light Pink', color: '#F5DADF', tag: 'lpin' }, { name: 'Pink', color: '#FFC0CB', tag: 'pin' },
+    { name: 'Light Purple', color: '#E0B0FF', tag: 'lpu' }, { name: 'Purple', color: '#DA70D6', tag: 'pu' },
+    { name: 'Light Blue', color: '#89CFF0', tag: 'lblu' }, { name: 'Blue', color: '#0000FF', tag: 'blu' },
+    { name: 'Light Green', color: '#90EE90', tag: 'lgr' }, { name: 'Green', color: '#4CBB17', tag: 'gr' },
+    { name: 'Light Brown', color: '#C19A6B', tag: 'lbro' }, { name: 'Brown', color: '#7B3F00', tag: 'bro' },
+    { name: 'Light Grey', color: '#D3D3D3', tag: 'lgre' }, { name: 'Grey', color: '#899499', tag: 'gre' }
 ];
 
 function renderColorToolbars() {
-    const toolbars = [
-        { id: 'new-color-toolbar', target: 'new-proj-pattern' },
-        { id: 'edit-color-toolbar', target: 'edit-proj-pattern' }
-    ];
+    const toolbars = [{ id: 'new-color-toolbar', target: 'new-proj-pattern' }, { id: 'edit-color-toolbar', target: 'edit-proj-pattern' }];
     toolbars.forEach(tb => {
         let container = document.getElementById(tb.id);
         if (!container) return;
         container.innerHTML = '';
-
         PALETTE.forEach(cObj => {
             let btn = document.createElement('div');
             btn.className = 'color-btn';
             btn.style.backgroundColor = cObj.color;
-            btn.title = `Apply ${cObj.name} color (<${cObj.tag}>)`;
-
             btn.onclick = (e) => {
                 e.preventDefault();
                 let ta = document.getElementById(tb.target);
-                
                 let activeView = document.querySelector('.view.active');
                 let currentScroll = activeView ? activeView.scrollTop : 0;
-
-                let start = ta.selectionStart;
-                let end = ta.selectionEnd;
-                let text = ta.value;
-
+                let start = ta.selectionStart; let end = ta.selectionEnd; let text = ta.value;
                 if (start === end) {
                     let insert = `<${cObj.tag}></${cObj.tag}>`;
                     ta.value = text.substring(0, start) + insert + text.substring(end);
                     ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start + cObj.tag.length + 2, start + cObj.tag.length + 2);
                 } else {
-                    let selectedText = text.substring(start, end);
-                    let wrapped = `<${cObj.tag}>${selectedText}</${cObj.tag}>`;
+                    let wrapped = `<${cObj.tag}>${text.substring(start, end)}</${cObj.tag}>`;
                     ta.value = text.substring(0, start) + wrapped + text.substring(end);
                     ta.focus({ preventScroll: true });
                     ta.setSelectionRange(start, start + wrapped.length);
                 }
-
                 if (activeView) activeView.scrollTop = currentScroll;
             };
             container.appendChild(btn);
@@ -419,7 +505,6 @@ function renderNodeColorPicker() {
         let btn = document.createElement('div');
         btn.className = 'color-btn';
         btn.style.backgroundColor = cObj.color;
-        btn.title = cObj.name;
         btn.onclick = () => applyNodeColor(cObj.tag);
         container.appendChild(btn);
     });
@@ -432,27 +517,23 @@ function getColorCode(tag) {
     return found ? found.color : tag; 
 }
 
-// --- Dynamic Color Change Engine ---
 function openNodeColorPicker(pathStr, event) {
     event.stopPropagation();
-    currentTargetType = 'node';
-    currentNodePathForColor = pathStr;
+    currentTargetType = 'node'; currentNodePathForColor = pathStr;
     document.getElementById('node-color-modal').querySelector('h3').innerText = 'Color Stitch';
     document.getElementById('node-color-modal').style.display = 'flex';
 }
 
 function openBlockNoteColorPicker(event) {
     event.stopPropagation();
-    currentTargetType = 'blockNote';
-    currentNodePathForColor = null;
+    currentTargetType = 'blockNote'; currentNodePathForColor = null;
     document.getElementById('node-color-modal').querySelector('h3').innerText = 'Color Section';
     document.getElementById('node-color-modal').style.display = 'flex';
 }
 
 function openRowColorPicker(event) {
     event.stopPropagation();
-    currentTargetType = 'row';
-    currentNodePathForColor = null;
+    currentTargetType = 'row'; currentNodePathForColor = null;
     document.getElementById('node-color-modal').querySelector('h3').innerText = 'Color Row';
     document.getElementById('node-color-modal').style.display = 'flex';
 }
@@ -461,14 +542,9 @@ function serializeNodesToText(nodes) {
     let parts = [];
     for (let n of nodes) {
         let str = "";
-        if (n.type === 'step') {
-            str = `${n.max} ${n.text}`;
-        } else if (n.type === 'group') {
-            str = `[ ${serializeNodesToText(n.nodes)} ] x ${n.max}`;
-        }
-        if (n.color) {
-            str = `<${n.color}>${str}</${n.color}>`;
-        }
+        if (n.type === 'step') str = `${n.max} ${n.text}`;
+        else if (n.type === 'group') str = `[ ${serializeNodesToText(n.nodes)} ] x ${n.max}`;
+        if (n.color) str = `<${n.color}>${str}</${n.color}>`;
         parts.push(str);
     }
     return parts.join(", ");
@@ -478,96 +554,51 @@ function applyNodeColor(colorTag) {
     let proj = projects.find(p => p.id === currentProjectId);
     let row = proj.rows[currentRowIndex];
     
-    if (currentTargetType === 'node') {
-        if (!currentNodePathForColor) return;
-        let node = getNodeByPath(row.nodes, currentNodePathForColor);
-        node.color = colorTag;
-        
-        let lines = proj.patternText.split('\n');
-        let sourceIdx = row.sourceLineIndex;
-        
+    if (currentTargetType === 'node' && currentNodePathForColor) {
+        let node = getNodeByPath(row.nodes, currentNodePathForColor); node.color = colorTag;
+        let lines = proj.patternText.split('\n'); let sourceIdx = row.sourceLineIndex;
         if (sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
-            let originalLine = lines[sourceIdx];
-            
-            let prefixMatch = originalLine.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[.:-]+\\s*`, 'i'));
-            let prefix = prefixMatch ? prefixMatch[0] : "";
-            
-            let hashIdx = originalLine.indexOf('#');
-            let suffix = hashIdx !== -1 ? " " + originalLine.substring(hashIdx) : "";
-            
-            let newPatternPart = serializeNodesToText(row.nodes);
-            let rowTotal = row.rowTotalStr ? " " + row.rowTotalStr : "";
-            
-            lines[sourceIdx] = prefix + newPatternPart + rowTotal + suffix;
-            proj.patternText = lines.join('\n');
-        }
-    } else if (currentTargetType === 'blockNote') {
-        let sourceIdx = row.blockNoteSourceIdx;
-        if (sourceIdx !== undefined && sourceIdx !== null) {
-            let lines = proj.patternText.split('\n');
             let line = lines[sourceIdx];
-            
-            let hashIdx = line.indexOf('#');
-            let comment = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
-            let baseText = row.blockNote; 
-            
-            lines[sourceIdx] = colorTag ? `<${colorTag}>${baseText}</${colorTag}>${comment}` : `${baseText}${comment}`;
+            let prefixMatch = line.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[.:-]+\\s*`, 'i'));
+            let prefix = prefixMatch ? prefixMatch[0] : "";
+            let hashIdx = line.indexOf('#'); let suffix = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
+            lines[sourceIdx] = prefix + serializeNodesToText(row.nodes) + (row.rowTotalStr ? " " + row.rowTotalStr : "") + suffix;
             proj.patternText = lines.join('\n');
         }
-    } else if (currentTargetType === 'row') {
-        let sourceIdx = row.sourceLineIndex;
-        if (sourceIdx !== undefined && sourceIdx !== null) {
-            let lines = proj.patternText.split('\n');
-            let originalLine = lines[sourceIdx];
-
-            let hashIdx = originalLine.indexOf('#');
-            let noteStr = hashIdx !== -1 ? originalLine.substring(hashIdx) : "";
-            let lineWithoutNote = hashIdx !== -1 ? originalLine.substring(0, hashIdx) : originalLine;
-
-            let prefixRegex = new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+|第?\\s*\\d+\\s*[圈行])[.:-]+\\s*`, 'i');
-            let prefixMatch = lineWithoutNote.match(prefixRegex);
-            let prefixStr = prefixMatch ? prefixMatch[0] : "";
-            
-            let instructionWithTotal = lineWithoutNote.substring(prefixStr.length).trimRight();
-            
-            let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
-            let totalMatch = instructionWithTotal.match(totalRegex);
-            let totalStr = totalMatch ? " " + totalMatch[1] : "";
-            let coreInst = instructionWithTotal.replace(totalRegex, '').trim();
-
-            let tagMatch = coreInst.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
-            if (tagMatch) {
-                coreInst = tagMatch[2].trim();
-            }
-
-            if (colorTag) {
-                coreInst = `<${colorTag}>${coreInst}</${colorTag}>`;
-            }
-
-            lines[sourceIdx] = prefixStr + coreInst + totalStr + (noteStr ? " " + noteStr : "");
-            proj.patternText = lines.join('\n');
-        }
+    } else if (currentTargetType === 'blockNote' && row.blockNoteSourceIdx !== null) {
+        let lines = proj.patternText.split('\n'); let line = lines[row.blockNoteSourceIdx];
+        let hashIdx = line.indexOf('#'); let comment = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
+        lines[row.blockNoteSourceIdx] = colorTag ? `<${colorTag}>${row.blockNote}</${colorTag}>${comment}` : `${row.blockNote}${comment}`;
+        proj.patternText = lines.join('\n');
+    } else if (currentTargetType === 'row' && row.sourceLineIndex !== null) {
+        let lines = proj.patternText.split('\n'); let orig = lines[row.sourceLineIndex];
+        let hashIdx = orig.indexOf('#'); let noteStr = hashIdx !== -1 ? orig.substring(hashIdx) : "";
+        let lineNoNote = hashIdx !== -1 ? orig.substring(0, hashIdx) : orig;
+        let prefMatch = lineNoNote.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+|第?\\s*\\d+\\s*[圈行])[.:-]+\\s*`, 'i'));
+        let prefixStr = prefMatch ? prefMatch[0] : "";
+        let instPart = lineNoNote.substring(prefixStr.length).trimRight();
+        let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
+        let totMatch = instPart.match(totalRegex); let totStr = totMatch ? " " + totMatch[1] : "";
+        let coreInst = instPart.replace(totalRegex, '').trim();
+        let tagMatch = coreInst.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
+        if (tagMatch) coreInst = tagMatch[2].trim();
+        if (colorTag) coreInst = `<${colorTag}>${coreInst}</${colorTag}>`;
+        lines[row.sourceLineIndex] = prefixStr + coreInst + totStr + (noteStr ? " " + noteStr : "");
+        proj.patternText = lines.join('\n');
     }
     
     let newRows = processPatternIntoRows(proj.patternText);
     syncProjectProgress(proj.rows, newRows);
-    
     proj.rows = newRows;
-    saveData();
-    refreshTrackerUI();
-    closeModal('node-color-modal');
-    currentTargetType = null;
-    currentNodePathForColor = null;
+    saveData(); refreshTrackerUI(); closeModal('node-color-modal');
+    currentTargetType = null; currentNodePathForColor = null;
 }
 
-// --- Specific Row Inline Editing ---
 function openRowEditModal(rowIdx) {
     let proj = projects.find(p => p.id === currentProjectId);
     if (!proj || !proj.rows[rowIdx]) return;
-
     editingSourceLineIndex = proj.rows[rowIdx].sourceLineIndex;
     let lines = proj.patternText.split('\n');
-    
     document.getElementById('row-edit-textarea').value = lines[editingSourceLineIndex];
     document.getElementById('row-edit-modal').style.display = 'flex';
 }
@@ -575,49 +606,26 @@ function openRowEditModal(rowIdx) {
 function saveRowEdit() {
     let proj = projects.find(p => p.id === currentProjectId);
     if (!proj) return;
-
     let lines = proj.patternText.split('\n');
-    let newText = document.getElementById('row-edit-textarea').value;
-    
-    lines[editingSourceLineIndex] = newText;
+    lines[editingSourceLineIndex] = document.getElementById('row-edit-textarea').value;
     proj.patternText = lines.join('\n');
-    
     let newRows = processPatternIntoRows(proj.patternText);
     syncProjectProgress(proj.rows, newRows);
-    
     proj.rows = newRows;
-    
-    if (currentRowIndex >= proj.rows.length) {
-        currentRowIndex = Math.max(0, proj.rows.length - 1);
-    }
-
-    saveData();
-    closeModal('row-edit-modal');
-
+    if (currentRowIndex >= proj.rows.length) currentRowIndex = Math.max(0, proj.rows.length - 1);
+    saveData(); closeModal('row-edit-modal');
     let editTa = document.getElementById('edit-proj-pattern');
     if (editTa) editTa.value = proj.patternText;
-
-    if (document.getElementById('tracker-view').classList.contains('active')) {
-        refreshTrackerUI();
-    } else if (document.getElementById('project-view').classList.contains('active')) {
-        renderRowList(proj);
-    }
+    document.getElementById('tracker-view').classList.contains('active') ? refreshTrackerUI() : renderRowList(proj);
 }
 
-// --- Parser Engine ---
 function splitTopLevel(str) {
     let result = [], current = '', depth = 0;
     for (let i = 0; i < str.length; i++) {
         let char = str[i];
         if (char === '(' || char === '[' || char === '{' || char === '<') depth++;
         else if (char === ')' || char === ']' || char === '}' || char === '>') depth = Math.max(0, depth - 1);
-
-        if (char === ',' && depth === 0) {
-            result.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
+        if (char === ',' && depth === 0) { result.push(current.trim()); current = ''; } else { current += char; }
     }
     if (current) result.push(current.trim());
     return result;
@@ -625,162 +633,77 @@ function splitTopLevel(str) {
 
 function distributeColorTags(str) {
     return str.replace(/<([a-zA-Z]+)>([\s\S]*?)<\/\1>/gi, function(match, color, content) {
-        let parts = splitTopLevel(content);
-        return parts.map(p => `<${color}>${p.trim()}</${color}>`).join(', ');
+        return splitTopLevel(content).map(p => `<${color}>${p.trim()}</${color}>`).join(', ');
     });
 }
 
 function parsePart(str, inheritedColor = null) {
-    str = str.trim();
-    let color = inheritedColor;
-
+    str = str.trim(); let color = inheritedColor;
     let colorMatch = str.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
-    if (colorMatch) {
-        color = colorMatch[1];
-        str = colorMatch[2].trim();
-    }
-
-    let groupMatch = str.match(/^[\(\[]([\s\S]*)[\)\]]\s*(?:\*|x|X)?\s*(\d+)$/i);
-    if (!groupMatch) {
-        let pMatch = str.match(/^(\d+)\s*(?:\*|x|X)?\s*[\(\[]([\s\S]*)[\)\]]$/i);
-        if (pMatch) groupMatch = [pMatch[0], pMatch[2], pMatch[1]];
-    }
-
-    if (groupMatch) {
-        return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
-    }
-    
+    if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
+    let groupMatch = str.match(/^[\(\[]([\s\S]*)[\)\]]\s*(?:\*|x|X)?\s*(\d+)$/i) || str.match(/^(\d+)\s*(?:\*|x|X)?\s*[\(\[]([\s\S]*)[\)\]]$/i);
+    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[]/)) { groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; } // swap
+    if (groupMatch) return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     let groupMatchNoMulti = str.match(/^[\(\[]([\s\S]*)[\)\]]$/i);
-    if (groupMatchNoMulti) {
-        return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
-    }
-
-    let max = 1;
-    let text = str;
-
+    if (groupMatchNoMulti) return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
+    let max = 1, text = str;
     let multiMatch = text.match(/(.*)\s*(?:\*|x|X)\s*(\d+)$/i);
-
-    if (multiMatch) {
-        max = parseInt(multiMatch[2], 10);
-        text = multiMatch[1].trim();
-    } else {
+    if (multiMatch) { max = parseInt(multiMatch[2], 10); text = multiMatch[1].trim(); }
+    else {
         let startMatch = text.match(/^(\d+)\s*(.*)$/);
-        if (startMatch) {
-            max = parseInt(startMatch[1], 10);
-            text = startMatch[2].trim();
-            if (!text) text = "st";
-        } else {
-            let endMatch = text.match(/^(.*?)\s+(\d+)$/);
-            if (endMatch) {
-                max = parseInt(endMatch[2], 10);
-                text = endMatch[1].trim();
-            } else {
-                let endMatchAttached = text.match(/^(.*?[a-zA-Z])(\d+)$/);
-                if (endMatchAttached) {
-                    max = parseInt(endMatchAttached[2], 10);
-                    text = endMatchAttached[1].trim();
-                }
-            }
+        if (startMatch) { max = parseInt(startMatch[1], 10); text = startMatch[2].trim() || "st"; }
+        else {
+            let endMatch = text.match(/^(.*?)\s+(\d+)$/) || text.match(/^(.*?[a-zA-Z])(\d+)$/);
+            if (endMatch) { max = parseInt(endMatch[2], 10); text = endMatch[1].trim(); }
         }
     }
-
     return { type: 'step', max: max, current: 0, text: text, color: color };
 }
 
-function parseSequence(str, inheritedColor = null) {
-    let parts = splitTopLevel(str);
-    return parts.map(p => parsePart(p, inheritedColor));
-}
+function parseSequence(str, inheritedColor = null) { return splitTopLevel(str).map(p => parsePart(p, inheritedColor)); }
 
 function processPatternIntoRows(patternText) {
-    let rawLines = patternText.split('\n');
-    let expandedLines = [];
-
+    let rawLines = patternText.split('\n'); let expandedLines = [];
     const rangeRegex = new RegExp(`^\\s*(${ROW_PREFIXES})?\\s*(\\d+)\\s*-\\s*(?:${ROW_PREFIXES})?\\s*(\\d+)[\\s.:-]+(.+)$`, 'i');
-
     rawLines.forEach((line, idx) => {
         if (line.trim().length === 0) return;
         let match = line.match(rangeRegex);
         if (match) {
-            let prefixStr = match[1] || 'Row';
-            let lowerPrefix = prefixStr.toLowerCase();
+            let prefixStr = match[1] || 'Row'; let lowerPrefix = prefixStr.toLowerCase();
             prefixStr = PREFIX_NORM_MAP[lowerPrefix] || (prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase());
-
-            let space = ' '; 
-            let start = parseInt(match[2], 10);
-            let end = parseInt(match[3], 10);
-
-            if (start <= end) {
-                for (let i = start; i <= end; i++) expandedLines.push({ text: `${prefixStr}${space}${i}: ${match[4].trim()}`, sourceLineIndex: idx });
-            } else {
-                for (let i = start; i >= end; i--) expandedLines.push({ text: `${prefixStr}${space}${i}: ${match[4].trim()}`, sourceLineIndex: idx });
-            }
-        } else {
-            expandedLines.push({ text: line, sourceLineIndex: idx });
-        }
+            let start = parseInt(match[2], 10), end = parseInt(match[3], 10);
+            if (start <= end) for (let i = start; i <= end; i++) expandedLines.push({ text: `${prefixStr} ${i}: ${match[4].trim()}`, sourceLineIndex: idx });
+            else for (let i = start; i >= end; i--) expandedLines.push({ text: `${prefixStr} ${i}: ${match[4].trim()}`, sourceLineIndex: idx });
+        } else expandedLines.push({ text: line, sourceLineIndex: idx });
     });
 
-    let currentBlockNote = null;
-    let currentDisplayIndex = 0;
-    let finalRows = [];
-
+    let currentBlockNote = null, currentDisplayIndex = 0, finalRows = [];
     expandedLines.forEach(item => {
-        let line = item.text;
-        let trimmedLine = line.trim();
-        let cleanLine = trimmedLine.replace(/<.*?>/g, '').trim();
-
+        let line = item.text; let trimmedLine = line.trim(); let cleanLine = trimmedLine.replace(/<.*?>/g, '').trim();
         let rowPrefixRegex = new RegExp(`^\\s*(${ROW_PREFIXES})(?:[\\s\\d.:-]|$)`, 'i');
-        let hasDigits = /\d/.test(cleanLine);
-
-        if (!hasDigits && !rowPrefixRegex.test(cleanLine)) {
-            let displayNote = cleanLine;
-            let noteColor = null;
-
+        if (!/\d/.test(cleanLine) && !rowPrefixRegex.test(cleanLine)) {
+            let displayNote = cleanLine; let noteColor = null;
             let colorMatch = trimmedLine.match(/^\s*<([a-zA-Z]+)>([\s\S]*?)<\/\1>\s*(?:#.*)?$/i);
-            if (colorMatch) {
-                noteColor = colorMatch[1];
-                displayNote = colorMatch[2].trim();
-            }
-
-            let hashIdx = displayNote.indexOf('#');
-            if (hashIdx !== -1) {
-                displayNote = displayNote.substring(0, hashIdx).trim();
-            }
-
+            if (colorMatch) { noteColor = colorMatch[1]; displayNote = colorMatch[2].trim(); }
+            let hashIdx = displayNote.indexOf('#'); if (hashIdx !== -1) displayNote = displayNote.substring(0, hashIdx).trim();
             if (!currentBlockNote || displayNote !== currentBlockNote.text) {
-                currentBlockNote = {
-                    text: displayNote,
-                    color: noteColor,
-                    sourceLineIndex: item.sourceLineIndex
-                };
-                currentDisplayIndex = 0;
+                currentBlockNote = { text: displayNote, color: noteColor, sourceLineIndex: item.sourceLineIndex }; currentDisplayIndex = 0;
             } else if (currentBlockNote && currentBlockNote.color !== noteColor) {
-                currentBlockNote.color = noteColor;
-                currentBlockNote.sourceLineIndex = item.sourceLineIndex;
+                currentBlockNote.color = noteColor; currentBlockNote.sourceLineIndex = item.sourceLineIndex;
             }
             return;
         }
 
         currentDisplayIndex++;
-
-        let rowNote = "";
-        let hashIdx = line.indexOf('#');
-        if (hashIdx !== -1) {
-            rowNote = line.substring(hashIdx + 1).trim();
-            line = line.substring(0, hashIdx).trim(); 
-        }
-
+        let rowNote = ""; let hashIdx = line.indexOf('#');
+        if (hashIdx !== -1) { rowNote = line.substring(hashIdx + 1).trim(); line = line.substring(0, hashIdx).trim(); }
         let pm = line.match(new RegExp(`^\\s*(第\\s*\\d+\\s*[圈行]|${ROW_PREFIXES})`, 'i'));
-        let rowPrefix = pm ? pm[1] : 'Row';
-        let lowerPrefix = rowPrefix.toLowerCase();
+        let rowPrefix = pm ? pm[1] : 'Row'; let lowerPrefix = rowPrefix.toLowerCase();
         rowPrefix = PREFIX_NORM_MAP[lowerPrefix] || (rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase());
-
         let instructionPart = line.replace(new RegExp(`^\\s*(?:第?\\s*\\d+\\s*[圈行][\\s.:-]*|(?:${ROW_PREFIXES})\\s*\\d*[\\s.:-]*|\\d+[\\s.:-]+)`, 'i'), '');
         cleanLine = normalizeMultipliers(instructionPart);
-        
         let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
-        let totalMatch = cleanLine.match(totalRegex);
-        let rowTotalStr = totalMatch ? totalMatch[1] : "";
+        let totalMatch = cleanLine.match(totalRegex); let rowTotalStr = totalMatch ? totalMatch[1] : "";
         let coreWithoutTotal = cleanLine.replace(totalRegex, '').trim();
 
         let rowColor = null;
@@ -788,44 +711,21 @@ function processPatternIntoRows(patternText) {
         if (outerTagMatch) {
             rowColor = outerTagMatch[1];
             let innerText = outerTagMatch[2] + (totalMatch ? " " + totalMatch[0] : "");
-            let innerSanitized = parseInEachSt(innerText);
-            if (innerSanitized) {
-                cleanLine = innerSanitized;
-            } else {
-                cleanLine = outerTagMatch[2].trim();
-            }
-        } else {
-            let sanitized = parseInEachSt(cleanLine);
-            if (sanitized) {
-                cleanLine = sanitized;
-            } else {
-                cleanLine = coreWithoutTotal;
-            }
-        }
+            cleanLine = parseInEachSt(innerText) || outerTagMatch[2].trim();
+        } else cleanLine = parseInEachSt(coreWithoutTotal) || coreWithoutTotal;
         
         cleanLine = distributeColorTags(cleanLine);
-        let nodes = parseSequence(cleanLine, rowColor);
-
         finalRows.push({
-            originalText: line, 
-            instructionText: instructionPart, 
-            nodes: nodes,
-            blockNote: currentBlockNote ? currentBlockNote.text : null,
-            blockNoteColor: currentBlockNote ? currentBlockNote.color : null,
-            blockNoteSourceIdx: currentBlockNote ? currentBlockNote.sourceLineIndex : null,
-            rowNote: rowNote,
-            rowTotalStr: rowTotalStr, 
-            sourceLineIndex: item.sourceLineIndex,
-            displayIndex: currentDisplayIndex,
-            rowPrefix: rowPrefix,
-            rowColor: rowColor
+            originalText: line, instructionText: instructionPart, nodes: parseSequence(cleanLine, rowColor),
+            blockNote: currentBlockNote ? currentBlockNote.text : null, blockNoteColor: currentBlockNote ? currentBlockNote.color : null,
+            blockNoteSourceIdx: currentBlockNote ? currentBlockNote.sourceLineIndex : null, rowNote: rowNote, rowTotalStr: rowTotalStr, 
+            sourceLineIndex: item.sourceLineIndex, displayIndex: currentDisplayIndex, rowPrefix: rowPrefix, rowColor: rowColor
         });
     });
-
     return finalRows;
 }
 
-// --- Import / Export ---
+// Export / Import
 function promptExport(id, event) {
     event.stopPropagation();
     let proj = projects.find(p => p.id === id);
@@ -842,42 +742,24 @@ function downloadExportData() {
     try {
         let blob = new Blob([dataStr], { type: "text/plain;charset=utf-8" });
         let url = window.URL.createObjectURL(blob);
-        let a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.download = currentExportFilename;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-        }, 200);
+        let a = document.createElement('a'); a.style.display = 'none'; a.href = url; a.download = currentExportFilename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 200);
         closeModal('export-modal');
-    } catch (e) {
-        alert("Your browser blocks downloads. Please use 'Copy'.");
-    }
+    } catch (e) { alert("Your browser blocks downloads. Please use 'Copy'."); }
 }
 
 function copyExportData() {
-    let ta = document.getElementById('export-textarea');
-    ta.select();
-    ta.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(ta.value).then(() => {
-        alert("Data copied! Paste it anywhere safe.");
-        closeModal('export-modal');
-    }).catch(err => {
-        alert("Select text and copy manually.");
-    });
+    let ta = document.getElementById('export-textarea'); ta.select(); ta.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(ta.value).then(() => { alert("Data copied! Paste it anywhere safe."); closeModal('export-modal'); })
+    .catch(err => alert("Select text and copy manually."));
 }
 
 function importProjectFile(event) {
     let file = event.target.files[0];
     if (!file) return;
     let reader = new FileReader();
-    reader.onload = function(e) {
-        processImportData(e.target.result);
-        event.target.value = '';
-    };
+    reader.onload = function(e) { processImportData(e.target.result); event.target.value = ''; };
     reader.readAsText(file);
 }
 
@@ -893,6 +775,7 @@ function confirmPasteImport() {
 }
 
 function processImportData(rawText) {
+    if (projects.length >= 9) { alert("Max 9 projects reached. Please delete one first."); return false; }
     try {
         let importedData = JSON.parse(rawText);
         if (!importedData.name || !importedData.patternText || !importedData.rows) throw new Error("Invalid format");
@@ -902,44 +785,43 @@ function processImportData(rawText) {
         saveData();
         renderProjectList();
         alert("Project imported successfully!");
+        showView('home-view');
         return true;
-    } catch (error) {
-        alert("Failed to import. Make sure you pasted the exact raw JSON text.");
-        return false;
-    }
+    } catch (error) { alert("Failed to import. Make sure you pasted the exact raw JSON text."); return false; }
 }
 
 function showView(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
     if (viewId === 'home-view') renderProjectList();
+    if (viewId === 'add-project-view') {
+        document.getElementById('new-proj-name').value = '';
+        document.getElementById('new-proj-notes').value = '';
+        document.getElementById('new-proj-pattern').value = '';
+        tempAddPhotos = [null, null, null];
+        renderAddPhotos();
+    }
 }
 
 function createProject() {
+    if (projects.length >= 9) return alert("Max 9 projects reached. Please delete one first.");
     let name = document.getElementById('new-proj-name').value;
     let notes = document.getElementById('new-proj-notes').value;
     let pattern = document.getElementById('new-proj-pattern').value;
     if (!name || !pattern) return alert("Please enter a name and pattern.");
     
     let newProject = { 
-        id: Date.now(), 
-        name: name, 
-        notes: notes,
-        patternText: pattern, 
-        rows: processPatternIntoRows(pattern) 
+        id: Date.now(), name: name, notes: notes, patternText: pattern, 
+        rows: processPatternIntoRows(pattern), images: tempAddPhotos.slice()
     };
     projects.push(newProject);
     saveData();
-    
-    document.getElementById('new-proj-name').value = '';
-    document.getElementById('new-proj-notes').value = '';
-    document.getElementById('new-proj-pattern').value = '';
-    renderProjectList();
+    openProject(newProject.id); // Direct to tracker? They said "Save & Track -> we start tracking". I'll open Tracker.
+    openTracker(0);
 }
 
 function promptDelete(id, name, event) {
-    event.stopPropagation();
-    projectToDeleteId = id;
+    event.stopPropagation(); projectToDeleteId = id;
     document.getElementById('delete-proj-name').innerText = name;
     document.getElementById('delete-modal').style.display = 'flex';
 }
@@ -947,9 +829,7 @@ function promptDelete(id, name, event) {
 document.getElementById('btn-confirm-delete').addEventListener('click', () => {
     if (projectToDeleteId) {
         projects = projects.filter(p => p.id !== projectToDeleteId);
-        saveData();
-        renderProjectList();
-        closeModal('delete-modal');
+        saveData(); renderProjectList(); closeModal('delete-modal');
     }
 });
 
@@ -959,6 +839,7 @@ function openProject(id) {
     document.getElementById('edit-proj-name').value = proj.name;
     document.getElementById('edit-proj-notes').value = proj.notes || "";
     document.getElementById('edit-proj-pattern').value = proj.patternText;
+    renderEditPhotos(proj);
     renderRowList(proj);
     showView('project-view');
 }
@@ -969,18 +850,11 @@ function updateProject() {
     let newNotes = document.getElementById('edit-proj-notes').value;
     let newPatternText = document.getElementById('edit-proj-pattern').value;
     if (!newName || !newPatternText) return alert("Please enter a name and pattern.");
-
-    proj.name = newName;
-    proj.notes = newNotes;
-    proj.patternText = newPatternText;
-
+    proj.name = newName; proj.notes = newNotes; proj.patternText = newPatternText;
     let newRows = processPatternIntoRows(newPatternText);
     syncProjectProgress(proj.rows, newRows);
-
     proj.rows = newRows;
-    saveData();
-    renderRowList(proj);
-    alert("Project updated!");
+    saveData(); renderRowList(proj); alert("Project updated!");
 }
 
 function openTracker(rowIdx) {
@@ -992,15 +866,11 @@ function openTracker(rowIdx) {
 function navigateRow(direction) {
     let proj = projects.find(p => p.id === currentProjectId);
     let newIdx = currentRowIndex + direction;
-    if (newIdx >= 0 && newIdx < proj.rows.length) {
-        currentRowIndex = newIdx;
-        refreshTrackerUI();
-    }
+    if (newIdx >= 0 && newIdx < proj.rows.length) { currentRowIndex = newIdx; refreshTrackerUI(); }
 }
 
 function getNodeByPath(nodes, pathStr) {
-    let parts = pathStr.split('-').map(Number);
-    let current = { nodes: nodes };
+    let parts = pathStr.split('-').map(Number); let current = { nodes: nodes };
     for (let p of parts) current = current.nodes[p];
     return current;
 }
@@ -1009,74 +879,39 @@ function updateNode(pathStr, amount) {
     let proj = projects.find(p => p.id === currentProjectId);
     let rowNodes = proj.rows[currentRowIndex].nodes;
     let node = getNodeByPath(rowNodes, pathStr);
-    
-    let wasMax = node.current === node.max;
-    let wasRowDone = checkNodesDone(rowNodes); 
-    
+    let wasMax = node.current === node.max; let wasRowDone = checkNodesDone(rowNodes); 
     node.current += amount;
-    if (node.current < 0) node.current = 0;
-    if (node.current > node.max) node.current = node.max;
-    
-    let isMax = node.current === node.max;
-    let isRowDone = checkNodesDone(rowNodes);
-    
-    saveData();
-    refreshTrackerUI();
-
+    if (node.current < 0) node.current = 0; if (node.current > node.max) node.current = node.max;
+    let isMax = node.current === node.max; let isRowDone = checkNodesDone(rowNodes);
+    saveData(); refreshTrackerUI();
     if (amount > 0) {
-        if (!wasRowDone && isRowDone) {
-            if (navigator.vibrate) navigator.vibrate([30, 60, 30]); 
-        } else if (!wasMax && isMax) {
-            if (navigator.vibrate) navigator.vibrate(25); 
-        }
+        if (!wasRowDone && isRowDone && navigator.vibrate) navigator.vibrate([30, 60, 30]); 
+        else if (!wasMax && isMax && navigator.vibrate) navigator.vibrate(25); 
     }
 }
 
 function resetNodesDeep(nodes) {
     nodes.forEach(n => {
         if (n.type === 'step') n.current = 0;
-        if (n.type === 'group') {
-            n.current = 1;
-            n.history = {};
-            resetNodesDeep(n.nodes);
-        }
+        if (n.type === 'group') { n.current = 1; n.history = {}; resetNodesDeep(n.nodes); }
     });
 }
 
 function updateGroupNode(pathStr, amount) {
     let proj = projects.find(p => p.id === currentProjectId);
-    let rowNodes = proj.rows[currentRowIndex].nodes;
-    let node = getNodeByPath(rowNodes, pathStr);
-
-    let wasMax = node.current === node.max;
-    let wasRowDone = checkNodesDone(rowNodes);
-
+    let rowNodes = proj.rows[currentRowIndex].nodes; let node = getNodeByPath(rowNodes, pathStr);
+    let wasMax = node.current === node.max; let wasRowDone = checkNodesDone(rowNodes);
     if (!node.history) node.history = {};
     node.history[node.current] = JSON.parse(JSON.stringify(node.nodes));
-
     node.current += amount;
-    if (node.current < 1) node.current = 1;
-    if (node.current > node.max) node.current = node.max;
-
-    let isMax = node.current === node.max;
-
-    if (node.history[node.current]) {
-        node.nodes = JSON.parse(JSON.stringify(node.history[node.current]));
-    } else {
-        resetNodesDeep(node.nodes);
-    }
-    
-    let isRowDone = checkNodesDone(rowNodes);
-
-    saveData();
-    refreshTrackerUI();
-
+    if (node.current < 1) node.current = 1; if (node.current > node.max) node.current = node.max;
+    if (node.history[node.current]) node.nodes = JSON.parse(JSON.stringify(node.history[node.current]));
+    else resetNodesDeep(node.nodes);
+    let isMax = node.current === node.max; let isRowDone = checkNodesDone(rowNodes);
+    saveData(); refreshTrackerUI();
     if (amount > 0) {
-        if (!wasRowDone && isRowDone) {
-            if (navigator.vibrate) navigator.vibrate([30, 60, 30]); 
-        } else if (!wasMax && isMax) {
-            if (navigator.vibrate) navigator.vibrate(25); 
-        }
+        if (!wasRowDone && isRowDone && navigator.vibrate) navigator.vibrate([30, 60, 30]); 
+        else if (!wasMax && isMax && navigator.vibrate) navigator.vibrate(25); 
     }
 }
 
@@ -1085,18 +920,12 @@ function isNodeDone(node) {
     if (node.type === 'group') return node.current === node.max && node.nodes.every(isNodeDone);
     return false;
 }
-
-function checkNodesDone(nodes) {
-    return nodes.every(isNodeDone);
-}
+function checkNodesDone(nodes) { return nodes.every(isNodeDone); }
 
 let isNoteVisible = true;
-
 function toggleTrackerNote() {
     isNoteVisible = !isNoteVisible;
-    let noteInput = document.getElementById('tracker-row-note-input');
-    let eyeBtn = document.getElementById('eye-icon');
-
+    let noteInput = document.getElementById('tracker-row-note-input'); let eyeBtn = document.getElementById('eye-icon');
     if(isNoteVisible) {
         noteInput.style.display = 'block';
         eyeBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
@@ -1107,41 +936,69 @@ function toggleTrackerNote() {
 }
 
 function saveRowNoteFromUI() {
-    let noteInput = document.getElementById('tracker-row-note-input');
-    let newNote = noteInput.value.replace(/\n/g, ' ');
-
-    let proj = projects.find(p => p.id === currentProjectId);
-    let row = proj.rows[currentRowIndex];
-
+    let noteInput = document.getElementById('tracker-row-note-input'); let newNote = noteInput.value.replace(/\n/g, ' ');
+    let proj = projects.find(p => p.id === currentProjectId); let row = proj.rows[currentRowIndex];
     if(row.rowNote === newNote) return; 
-
     row.rowNote = newNote;
-
-    let lines = proj.patternText.split('\n');
-    let sourceIdx = row.sourceLineIndex;
-
+    let lines = proj.patternText.split('\n'); let sourceIdx = row.sourceLineIndex;
     if(sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
-        let line = lines[sourceIdx];
-        let hashIdx = line.indexOf('#');
-        if(hashIdx !== -1) {
-            line = line.substring(0, hashIdx);
-        }
-        if(newNote.trim().length > 0) {
-            line = line.trimRight() + " # " + newNote.trim();
-        } else {
-            line = line.trimRight(); 
-        }
-        lines[sourceIdx] = line;
-        proj.patternText = lines.join('\n');
+        let line = lines[sourceIdx]; let hashIdx = line.indexOf('#');
+        if(hashIdx !== -1) line = line.substring(0, hashIdx);
+        line = newNote.trim().length > 0 ? line.trimRight() + " # " + newNote.trim() : line.trimRight(); 
+        lines[sourceIdx] = line; proj.patternText = lines.join('\n');
     }
+    proj.rows.forEach(r => { if(r.sourceLineIndex === sourceIdx) r.rowNote = newNote; });
+    saveData();
+}
 
-    proj.rows.forEach(r => {
-        if(r.sourceLineIndex === sourceIdx) {
-            r.rowNote = newNote;
+function countNodes(nodes) {
+    let c = 0, m = 0;
+    nodes.forEach(n => {
+        if (n.type === 'step') { c += n.current; m += n.max; }
+        else if (n.type === 'group') {
+            let inner = countNodes(n.nodes);
+            c += ((n.current - 1) * inner.m) + inner.c;
+            m += (n.max * inner.m);
         }
     });
+    return {c, m};
+}
 
-    saveData();
+function getCompletionPercent(proj) {
+    let totalC = 0, totalM = 0;
+    proj.rows.forEach(r => { let s = countNodes(r.nodes); totalC += s.c; totalM += s.m; });
+    if (totalM === 0) return 0;
+    return Math.round((totalC / totalM) * 100);
+}
+
+function renderProjectList() {
+    let list = document.getElementById('project-grid');
+    list.innerHTML = '';
+    projects.forEach(proj => {
+        let div = document.createElement('div');
+        div.className = 'project-tassel';
+        div.onclick = () => openProject(proj.id);
+
+        let imgUrl = (proj.images && proj.images[0]) ? proj.images[0] : '';
+        let pct = getCompletionPercent(proj);
+
+        div.innerHTML = `
+            <div class="tassel-name" title="${proj.name}">${proj.name}</div>
+            <div class="tassel-img" style="background-image: url('${imgUrl}')"></div>
+            <div class="tassel-footer">
+                <span class="tassel-percent">${pct}%</span>
+                <div class="tassel-actions">
+                    <span class="action-icon export" onclick="promptExport(${proj.id}, event)" title="Export">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    </span>
+                    <span class="action-icon delete" onclick="promptDelete(${proj.id}, '${proj.name.replace(/'/g, "\\'")}', event)" title="Delete">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </span>
+                </div>
+            </div>
+        `;
+        list.appendChild(div);
+    });
 }
 
 function formatProgress(nodes) {
@@ -1153,39 +1010,6 @@ function formatProgress(nodes) {
     return parts.join(' | ');
 }
 
-function renderProjectList() {
-    let list = document.getElementById('project-list');
-    list.innerHTML = '';
-    projects.forEach(proj => {
-        let div = document.createElement('div');
-        div.className = 'project-card';
-        div.onclick = () => openProject(proj.id);
-
-        let nameSpan = document.createElement('span');
-        nameSpan.innerText = proj.name;
-        nameSpan.style.fontWeight = 'bold';
-
-        let actionsDiv = document.createElement('div');
-        actionsDiv.className = 'card-actions';
-
-        let expBtn = document.createElement('span');
-        expBtn.className = 'action-icon export';
-        expBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
-        expBtn.onclick = (e) => promptExport(proj.id, e);
-
-        let delBtn = document.createElement('span');
-        delBtn.className = 'action-icon delete';
-        delBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-        delBtn.onclick = (e) => promptDelete(proj.id, proj.name, e);
-
-        actionsDiv.appendChild(expBtn);
-        actionsDiv.appendChild(delBtn);
-        div.appendChild(nameSpan);
-        div.appendChild(actionsDiv);
-        list.appendChild(div);
-    });
-}
-
 function renderRowList(proj) {
     let list = document.getElementById('row-list');
     list.innerHTML = '';
@@ -1193,7 +1017,6 @@ function renderRowList(proj) {
         let isDone = checkNodesDone(row.nodes);
         let div = document.createElement('div');
         div.className = `row-list-item ${isDone ? 'row-done' : ''}`;
-
         let progressStr = formatProgress(row.nodes);
         let noteBadge = '';
         if (row.blockNote) {
@@ -1201,35 +1024,19 @@ function renderRowList(proj) {
             let borderStyle = actualColor ? `border-left: 4px solid ${actualColor};` : '';
             noteBadge = `<span style="font-size: 11px; background: var(--tracker-bg); ${borderStyle} padding: 3px 6px; border-radius: 6px; margin-right: 8px;">${row.blockNote}</span>`;
         }
-        
         let rowColorIndicator = '';
         if (row.rowColor) {
             let actualColor = getColorCode(row.rowColor);
-            if (actualColor) {
-                rowColorIndicator = `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:${actualColor}; margin-right:6px; border:1px solid rgba(255,255,255,0.3); vertical-align: middle;"></span>`;
-            }
+            if (actualColor) rowColorIndicator = `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:${actualColor}; margin-right:6px; border:1px solid rgba(255,255,255,0.3); vertical-align: middle;"></span>`;
         }
-        
-        let prefix = row.rowPrefix || 'Row';
-        let dNum = row.displayIndex !== undefined ? row.displayIndex : (idx + 1);
+        let prefix = row.rowPrefix || 'Row'; let dNum = row.displayIndex !== undefined ? row.displayIndex : (idx + 1);
         let vText = (row.instructionText || row.originalText).replace(/<\/?[a-zA-Z]+>/gi, '');
         let displayStr = `${prefix} ${dNum}: ${vText}`;
-
         let editBtn = `
             <span class="action-icon" style="color:var(--text-muted); padding:4px;" onclick="event.stopPropagation(); openRowEditModal(${idx});" title="Edit row">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
             </span>`;
-
-        div.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px;">
-                <span>${noteBadge}${rowColorIndicator}${displayStr}</span>
-                ${editBtn}
-            </div> 
-            <span>${progressStr}</span>`;
-            
+        div.innerHTML = `<div style="display:flex; align-items:center; gap:8px;"><span>${noteBadge}${rowColorIndicator}${displayStr}</span>${editBtn}</div><span>${progressStr}</span>`;
         div.onclick = () => openTracker(idx);
         list.appendChild(div);
     });
@@ -1238,115 +1045,62 @@ function renderRowList(proj) {
 function renderNodesHtml(nodes, pathPrefix = []) {
     let html = '';
     nodes.forEach((node, idx) => {
-        let currentPath = [...pathPrefix, idx];
-        let pathStr = currentPath.join('-');
-
+        let currentPath = [...pathPrefix, idx]; let pathStr = currentPath.join('-');
         if (node.type === 'step') {
-            let isDone = node.current === node.max;
-            let actualColor = getColorCode(node.color);
+            let isDone = node.current === node.max; let actualColor = getColorCode(node.color);
             let borderColor = actualColor ? `border-left: 6px solid ${actualColor};` : '';
-            
-            let dotStyle = actualColor 
-                ? `background-color:${actualColor}; border: 1px solid white;` 
-                : `background-color:transparent; border: 2px dashed var(--text-muted);`;
-                
+            let dotStyle = actualColor ? `background-color:${actualColor}; border: 1px solid white;` : `background-color:transparent; border: 2px dashed var(--text-muted);`;
             let colorDot = `<span onclick="openNodeColorPicker('${pathStr}', event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change color"></span>`;
-
-            html += `
-                <div class="segment-card ${isDone ? 'done' : ''}" style="${borderColor}">
-                    <div class="segment-text">${colorDot}${node.text}</div>
-                    <div class="segment-controls">
-                        <button class="btn-circle" onclick="updateNode('${pathStr}', -1)">-</button>
-                        <div class="segment-counter">${node.current}/${node.max}</div>
-                        <button class="btn-circle" onclick="updateNode('${pathStr}', 1)">+</button>
-                    </div>
-                </div>
-            `;
+            html += `<div class="segment-card ${isDone ? 'done' : ''}" style="${borderColor}">
+                        <div class="segment-text">${colorDot}${node.text}</div>
+                        <div class="segment-controls">
+                            <button class="btn-circle" onclick="updateNode('${pathStr}', -1)">-</button>
+                            <div class="segment-counter">${node.current}/${node.max}</div>
+                            <button class="btn-circle" onclick="updateNode('${pathStr}', 1)">+</button>
+                        </div>
+                    </div>`;
         } else if (node.type === 'group') {
-            let innerHtml = renderNodesHtml(node.nodes, currentPath);
-            let innerDone = checkNodesDone(node.nodes);
+            let innerHtml = renderNodesHtml(node.nodes, currentPath); let innerDone = checkNodesDone(node.nodes);
             let groupPlusPulse = (innerDone && node.current < node.max) ? 'pulse' : '';
-
-            html += `
-                <div class="group-layout">
-                    <div class="group-segments">
-                        ${innerHtml}
-                    </div>
-                    <div class="group-controls">
-                        <button class="btn-circle bracket-btn" onclick="updateGroupNode('${pathStr}', -1)">-</button>
-                        <div class="segment-counter bracket-counter">${node.current}/${node.max}</div>
-                        <button class="btn-circle bracket-btn ${groupPlusPulse}" onclick="updateGroupNode('${pathStr}', 1)">+</button>
-                    </div>
-                </div>
-            `;
+            html += `<div class="group-layout">
+                        <div class="group-segments">${innerHtml}</div>
+                        <div class="group-controls">
+                            <button class="btn-circle bracket-btn" onclick="updateGroupNode('${pathStr}', -1)">-</button>
+                            <div class="segment-counter bracket-counter">${node.current}/${node.max}</div>
+                            <button class="btn-circle bracket-btn ${groupPlusPulse}" onclick="updateGroupNode('${pathStr}', 1)">+</button>
+                        </div>
+                    </div>`;
         }
     });
     return html;
 }
 
 function refreshTrackerUI() {
-    let proj = projects.find(p => p.id === currentProjectId);
-    let row = proj.rows[currentRowIndex];
-
+    let proj = projects.find(p => p.id === currentProjectId); let row = proj.rows[currentRowIndex];
     let displayNum = row.displayIndex !== undefined ? row.displayIndex : (currentRowIndex + 1);
-    let prefix = row.rowPrefix || 'Row';
-    if (prefix === 'R') prefix = 'Row';
-
+    let prefix = row.rowPrefix || 'Row'; if (prefix === 'R') prefix = 'Row';
     document.getElementById('track-row-name').innerText = `${prefix} ${displayNum}`;
     
-    // Process Row Color visual indicators inside the Pattern Banner Display
     let actualRowColor = getColorCode(row.rowColor);
-    let rowDotStyle = actualRowColor 
-        ? `background-color:${actualRowColor}; border: 1px solid white;` 
-        : `background-color:transparent; border: 2px dashed var(--text-muted);`;
-
+    let rowDotStyle = actualRowColor ? `background-color:${actualRowColor}; border: 1px solid white;` : `background-color:transparent; border: 2px dashed var(--text-muted);`;
     let rowColorDot = `<span onclick="openRowColorPicker(event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${rowDotStyle} margin-right:10px; cursor:pointer; flex-shrink:0; vertical-align: middle;" title="Change row color"></span>`;
     
     let patternTextEl = document.getElementById('track-pattern-text');
     let textToDisplay = (row.instructionText || row.originalText).replace(/<\/?[a-zA-Z]+>/gi, '');
     patternTextEl.innerHTML = rowColorDot + `<span style="vertical-align: middle;">${textToDisplay}</span>`;
-
-    if (actualRowColor) {
-        patternTextEl.style.borderLeft = `6px solid ${actualRowColor}`;
-        patternTextEl.style.transition = 'border-left 0.3s ease';
-    } else {
-        patternTextEl.style.borderLeft = 'none';
-    }
+    patternTextEl.style.borderLeft = actualRowColor ? `6px solid ${actualRowColor}` : 'none';
+    patternTextEl.style.transition = 'border-left 0.3s ease';
 
     let noteContainer = document.getElementById('track-block-note');
     if (row.blockNote) {
         let actualColor = getColorCode(row.blockNoteColor);
-        let dotStyle = actualColor 
-            ? `background-color:${actualColor}; border: 1px solid white;` 
-            : `background-color:transparent; border: 2px dashed var(--text-muted);`;
-
-        noteContainer.innerHTML = `
-            <span onclick="openBlockNoteColorPicker(event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change section color"></span>
-            <span>${row.blockNote}</span>
-        `;
-        
+        let dotStyle = actualColor ? `background-color:${actualColor}; border: 1px solid white;` : `background-color:transparent; border: 2px dashed var(--text-muted);`;
+        noteContainer.innerHTML = `<span onclick="openBlockNoteColorPicker(event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change section color"></span><span>${row.blockNote}</span>`;
         noteContainer.style.borderColor = actualColor ? actualColor : 'var(--btn-hover)';
-        noteContainer.style.display = 'inline-flex';
-        noteContainer.style.alignItems = 'center';
-    } else {
-        noteContainer.style.display = 'none';
-    }
+        noteContainer.style.display = 'inline-flex'; noteContainer.style.alignItems = 'center';
+    } else noteContainer.style.display = 'none';
 
     let noteInput = document.getElementById('tracker-row-note-input');
-    if(noteInput) {
-        noteInput.value = row.rowNote || "";
-        noteInput.style.display = isNoteVisible ? 'block' : 'none';
-    }
-
+    if(noteInput) { noteInput.value = row.rowNote || ""; noteInput.style.display = isNoteVisible ? 'block' : 'none'; }
     document.getElementById('segments-container').innerHTML = renderNodesHtml(row.nodes);
 }
-
-// --- Init App ---
-loadTheme();
-renderColorToolbars();
-renderNodeColorPicker();
-renderProjectList();
-
-window.addEventListener('beforeunload', () => {
-    saveData();
-});
