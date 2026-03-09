@@ -191,7 +191,8 @@ button:hover { filter: brightness(1.2); }
 .tassel-img {
     flex-grow: 1;
     background-color: var(--bg-color);
-    background-size: cover;
+    background-size: contain; /* Changed from 'cover' to 'contain' */
+    background-repeat: no-repeat; /* Added to prevent tiling */
     background-position: center;
     position: relative;
     border-bottom: 1px solid var(--accent);
@@ -232,10 +233,10 @@ button:hover { filter: brightness(1.2); }
 .action-icon.edit-row:hover { color: var(--btn-hover); }
 
 /* Photo Grid */
-.photo-grid {
-    display: flex;
-    gap: 10px;
-    justify-content: space-between;
+.project-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr); /* Changed from 3 to 2 */
+    gap: 12px; /* Slightly increased gap for better spacing */
 }
 
 .photo-slot {
