@@ -1,3 +1,5 @@
+// --- START OF FILE app (11).js ---
+
 // --- Theme Management ---
 function loadTheme() {
     let saved = localStorage.getItem('crochetTheme') || 'midnight';
@@ -655,9 +657,10 @@ function parsePart(str, inheritedColor = null) {
     if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
     
     // --- Special preservation for {} clusters ---
-    let braceClusterMatch = str.match(/^\{([^,]*?)\}(?:\s*(?:\*|x|X|times)?\s*(\d+))?$/i);
+    // CHANGED: Use [\s\S]*? to allow matching commas inside the {}, making the entire `{...}` block one uniform step.
+    let braceClusterMatch = str.match(/^\{([\s\S]*?)\}(?:\s*(?:\*|x|X|times)?\s*(\d+))?$/i);
     if (!braceClusterMatch) {
-        let altBrace = str.match(/^(\d+)\s*(?:\*|x|X|times)?\s*\{([^,]*?)\}$/i);
+        let altBrace = str.match(/^(\d+)\s*(?:\*|x|X|times)?\s*\{([\s\S]*?)\}$/i);
         if (altBrace) braceClusterMatch = [altBrace[0], altBrace[2], altBrace[1]];
     }
     
@@ -665,32 +668,11 @@ function parsePart(str, inheritedColor = null) {
         let inner = braceClusterMatch[1].trim();
         let outerMulti = braceClusterMatch[2] ? parseInt(braceClusterMatch[2], 10) : 1;
         
-        let innerMax = 1;
-        let innerText = inner;
-
-        // Check number at the front
-        let frontMatch = inner.match(new RegExp(`^((?:${dynamicModifiers})\\s+)?(\\d+)\\s*(.*)$`, 'i'));
-        if (frontMatch) {
-            innerMax = parseInt(frontMatch[2], 10);
-            let modStr = frontMatch[1] ? frontMatch[1].trim() + ' ' : '';
-            let remStr = frontMatch[3].trim();
-            innerText = modStr + (remStr === '' ? 'st' : remStr);
-        } else {
-            // Check number at the end
-            let endMatchX = inner.match(/^(.+?)\s+(\d+)\s*x$/i);
-            if (endMatchX) {
-                innerMax = parseInt(endMatchX[2], 10);
-                innerText = endMatchX[1].trim();
-            } else {
-                let endMatch = inner.match(/^(.*?)\s+(\d+)$/) || inner.match(/^(.*?[a-zA-Z])(\d+)$/);
-                if (endMatch) {
-                    innerMax = parseInt(endMatch[2], 10);
-                    innerText = endMatch[1].trim();
-                }
-            }
-        }
-        
-        return { type: 'step', max: innerMax * outerMulti, current: 0, text: `{${innerText}}`, color: color };
+        // CHANGED: We intentionally DO NOT parse inner strings for max extraction. 
+        // A curly braces block like {3sc} is treated as ONE step repeated outerMulti times.
+        // Example: `{3sc} * 30` -> text: "{3sc}", max: 30 (renders as {3sc} 0/30)
+        // Example: `{3sc, 1inc}` -> text: "{3sc, 1inc}", max: 1 (renders as {3sc, 1inc} 0/1)
+        return { type: 'step', max: outerMulti, current: 0, text: `{${inner}}`, color: color };
     }
     // --- END Special preservation ---
     
