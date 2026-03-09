@@ -91,12 +91,28 @@ function migrateLocalStorage() {
     }
 }
 
+// FORCE REPARSE ENGINE: Fixes already saved projects on load
+function forceReparseAllProjects() {
+    let needsSave = false;
+    projects.forEach(proj => {
+        if (proj.patternText) {
+            let freshRows = processPatternIntoRows(proj.patternText);
+            syncProjectProgress(proj.rows, freshRows);
+            // Overwrite old rows with the newly parsed rows
+            proj.rows = freshRows;
+            needsSave = true;
+        }
+    });
+    if (needsSave) saveData();
+}
+
 // App Initialization
 window.onload = () => {
     loadTheme();
     renderColorToolbars();
     renderNodeColorPicker();
     initDB().then(() => {
+        forceReparseAllProjects(); // Re-parses everything with the new fixes
         renderProjectList();
     });
 };
@@ -559,7 +575,7 @@ function applyNodeColor(colorTag) {
         let lines = proj.patternText.split('\n'); let sourceIdx = row.sourceLineIndex;
         if (sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
             let line = lines[sourceIdx];
-            let prefixMatch = line.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[.:-]+\\s*`, 'i'));
+            let prefixMatch = line.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[\\s.:-]*`, 'i'));
             let prefix = prefixMatch ? prefixMatch[0] : "";
             let hashIdx = line.indexOf('#'); let suffix = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
             lines[sourceIdx] = prefix + serializeNodesToText(row.nodes) + (row.rowTotalStr ? " " + row.rowTotalStr : "") + suffix;
@@ -574,7 +590,7 @@ function applyNodeColor(colorTag) {
         let lines = proj.patternText.split('\n'); let orig = lines[row.sourceLineIndex];
         let hashIdx = orig.indexOf('#'); let noteStr = hashIdx !== -1 ? orig.substring(hashIdx) : "";
         let lineNoNote = hashIdx !== -1 ? orig.substring(0, hashIdx) : orig;
-        let prefMatch = lineNoNote.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*-\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+|第?\\s*\\d+\\s*[圈行])[.:-]+\\s*`, 'i'));
+        let prefMatch = lineNoNote.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+|第?\\s*\\d+\\s*[圈行])[\\s.:-]*`, 'i'));
         let prefixStr = prefMatch ? prefMatch[0] : "";
         let instPart = lineNoNote.substring(prefixStr.length).trimRight();
         let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
@@ -642,7 +658,7 @@ function parsePart(str, inheritedColor = null) {
     let colorMatch = str.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
     if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
     let groupMatch = str.match(/^[\(\[]([\s\S]*)[\)\]]\s*(?:\*|x|X)?\s*(\d+)$/i) || str.match(/^(\d+)\s*(?:\*|x|X)?\s*[\(\[]([\s\S]*)[\)\]]$/i);
-    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[]/)) { groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; } // swap
+    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[]/)) { groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; } 
     if (groupMatch) return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
     let groupMatchNoMulti = str.match(/^[\(\[]([\s\S]*)[\)\]]$/i);
     if (groupMatchNoMulti) return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
@@ -664,7 +680,8 @@ function parseSequence(str, inheritedColor = null) { return splitTopLevel(str).m
 
 function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n'); let expandedLines = [];
-    const rangeRegex = new RegExp(`^\\s*(${ROW_PREFIXES})?\\s*(\\d+)\\s*-\\s*(?:${ROW_PREFIXES})?\\s*(\\d+)[\\s.:-]+(.+)$`, 'i');
+    const rangeRegex = new RegExp(`^\\s*(${ROW_PREFIXES})?\\s*(\\d+)\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*(\\d+)[\\s.:-]+(.+)$`, 'i');
+    
     rawLines.forEach((line, idx) => {
         if (line.trim().length === 0) return;
         let match = line.match(rangeRegex);
@@ -702,17 +719,22 @@ function processPatternIntoRows(patternText) {
         rowPrefix = PREFIX_NORM_MAP[lowerPrefix] || (rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase());
         let instructionPart = line.replace(new RegExp(`^\\s*(?:第?\\s*\\d+\\s*[圈行][\\s.:-]*|(?:${ROW_PREFIXES})\\s*\\d*[\\s.:-]*|\\d+[\\s.:-]+)`, 'i'), '');
         cleanLine = normalizeMultipliers(instructionPart);
+        
         let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
         let totalMatch = cleanLine.match(totalRegex); let rowTotalStr = totalMatch ? totalMatch[1] : "";
         let coreWithoutTotal = cleanLine.replace(totalRegex, '').trim();
 
         let rowColor = null;
         let outerTagMatch = coreWithoutTotal.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
+        
         if (outerTagMatch) {
             rowColor = outerTagMatch[1];
             let innerText = outerTagMatch[2] + (totalMatch ? " " + totalMatch[0] : "");
             cleanLine = parseInEachSt(innerText) || outerTagMatch[2].trim();
-        } else cleanLine = parseInEachSt(coreWithoutTotal) || coreWithoutTotal;
+        } else {
+            let fullTextForMath = coreWithoutTotal + (totalMatch ? " " + totalMatch[0] : "");
+            cleanLine = parseInEachSt(fullTextForMath) || coreWithoutTotal;
+        }
         
         cleanLine = distributeColorTags(cleanLine);
         finalRows.push({
@@ -816,7 +838,7 @@ function createProject() {
     };
     projects.push(newProject);
     saveData();
-    openProject(newProject.id); // Direct to tracker? They said "Save & Track -> we start tracking". I'll open Tracker.
+    openProject(newProject.id); 
     openTracker(0);
 }
 
@@ -1104,3 +1126,4 @@ function refreshTrackerUI() {
     if(noteInput) { noteInput.value = row.rowNote || ""; noteInput.style.display = isNoteVisible ? 'block' : 'none'; }
     document.getElementById('segments-container').innerHTML = renderNodesHtml(row.nodes);
 }
+
