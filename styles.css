@@ -34,7 +34,7 @@ body {
     background-color: var(--bg-color);
     color: var(--text-main);
     margin: 0;
-    padding: 10px; /* Reduced to gain horizontal space on mobile */
+    padding: 10px;
     display: flex;
     justify-content: center;
 }
@@ -42,7 +42,7 @@ body {
 #app {
     width: 100%;
     max-width: 450px;
-    height: 98dvh; /* dvh fixes height issues with mobile browser search bars */
+    height: 98dvh;
     display: flex;
     flex-direction: column;
 }
@@ -50,10 +50,10 @@ body {
 .view {
     display: none;
     flex-direction: column;
-    gap: 12px; /* Tighter gap */
+    gap: 12px;
     flex-grow: 1;
     overflow-y: auto;
-    overflow-x: hidden; /* Guarantee no horizontal scroll */
+    overflow-x: hidden;
     padding-bottom: 10px;
 }
 
@@ -102,6 +102,35 @@ button {
 
 button:hover { filter: brightness(1.2); }
 
+.long-btn {
+    width: 100%;
+    padding: 14px;
+    font-size: 18px;
+    background-color: var(--btn-hover);
+    color: var(--bg-color);
+    border-radius: 10px;
+    margin-bottom: 5px;
+}
+
+.import-row {
+    display: flex;
+    gap: 10px;
+}
+
+.import-row button, .import-row label {
+    flex: 1;
+    text-align: center;
+    background-color: var(--accent);
+    padding: 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 14px;
+}
+
 .color-toolbar {
     display: grid;
     grid-template-rows: repeat(2, 1fr);
@@ -127,24 +156,64 @@ button:hover { filter: brightness(1.2); }
 
 .color-btn:hover { transform: scale(1.15); border-color: white; }
 
-.project-card {
+/* Grid for Projects */
+.project-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.project-tassel {
     background-color: var(--card-bg);
-    padding: 15px;
     border-radius: 10px;
     cursor: pointer;
-    border-left: 5px solid var(--btn-hover);
-    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--accent);
+    transition: 0.2s;
+    aspect-ratio: 0.8; /* Keeps a nice vertical card shape */
+}
+
+.project-tassel:hover { filter: brightness(1.1); transform: translateY(-2px); }
+
+.tassel-name {
+    font-size: 12px;
+    font-weight: bold;
+    padding: 6px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: rgba(0,0,0,0.2);
+}
+
+.tassel-img {
+    flex-grow: 1;
+    background-color: var(--bg-color);
+    background-size: cover;
+    background-position: center;
+    position: relative;
+    border-bottom: 1px solid var(--accent);
+}
+
+.tassel-footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 6px;
+    background-color: var(--card-bg);
 }
 
-.project-card:hover { filter: brightness(1.1); }
+.tassel-percent {
+    font-size: 11px;
+    font-weight: bold;
+    color: var(--text-muted);
+}
 
-.card-actions {
+.tassel-actions {
     display: flex;
-    gap: 15px;
-    align-items: center;
+    gap: 6px;
 }
 
 .action-icon {
@@ -156,11 +225,66 @@ button:hover { filter: brightness(1.2); }
     transition: 0.2s;
 }
 
-.action-icon svg { pointer-events: none; }
+.action-icon svg { pointer-events: none; width: 16px; height: 16px; }
 .action-icon:hover { transform: scale(1.2); }
 .action-icon.export:hover { color: var(--btn-hover); }
 .action-icon.delete:hover { color: var(--text-main); }
 .action-icon.edit-row:hover { color: var(--btn-hover); }
+
+/* Photo Grid */
+.photo-grid {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+}
+
+.photo-slot {
+    flex: 1;
+    aspect-ratio: 1;
+    background-color: var(--tracker-bg);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
+}
+
+.photo-slot-empty {
+    color: var(--text-muted);
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.photo-controls {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-around;
+    background: rgba(0,0,0,0.6);
+    padding: 4px 0;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.photo-slot:hover .photo-controls { opacity: 1; }
+
+.photo-controls button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.photo-controls button:hover { transform: scale(1.2); }
 
 .header-row {
     display: flex;
@@ -169,19 +293,17 @@ button:hover { filter: brightness(1.2); }
     margin-bottom: 5px;
 }
 
-.import-link {
-    color: white;
+.docs-link {
+    color: var(--btn-hover);
     font-size: 16px;
-    cursor: pointer;
-    transition: 0.2s;
-    text-decoration: underline;
-    text-decoration-color: transparent;
+    text-decoration: none;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
-.import-link:hover {
-    color: var(--btn-hover);
-    text-decoration-color: var(--btn-hover);
-}
+.docs-link:hover { filter: brightness(1.2); }
 
 .nav-btn {
     border-radius: 50%;
@@ -199,11 +321,11 @@ button:hover { filter: brightness(1.2); }
 .block-note-badge {
     background-color: var(--tracker-bg);
     color: white;
-    padding: 6px 16px; /* Compact */
+    padding: 6px 16px;
     border-radius: 20px;
     font-weight: bold;
-    font-size: 14px; /* Compact */
-    margin-bottom: 8px; /* Tighter margin */
+    font-size: 14px;
+    margin-bottom: 8px;
     border: 2px solid var(--btn-hover);
     align-self: center;
     display: none;
@@ -213,7 +335,7 @@ button:hover { filter: brightness(1.2); }
 
 .pattern-display {
     background-color: var(--accent);
-    padding: 10px 12px; /* Tighter vertical padding */
+    padding: 10px 12px;
     border-radius: 10px;
     text-align: center;
     font-size: 16px;
@@ -230,7 +352,7 @@ button:hover { filter: brightness(1.2); }
 #segments-container {
     display: flex;
     flex-direction: column;
-    gap: 6px; /* Reduced to fit more on screen */
+    gap: 6px;
 }
 
 .tracker-notes-section {
@@ -281,46 +403,46 @@ button:hover { filter: brightness(1.2); }
 .segment-card {
     background-color: var(--tracker-bg);
     border: 2px dashed rgba(255,255,255,0.3);
-    border-radius: 12px; /* Slightly tighter curves */
-    padding: 8px 10px; /* Reduced padding */
+    border-radius: 12px;
+    padding: 8px 10px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     transition: 0.3s;
-    min-width: 0; /* KEY: Prevents Flexbox from causing horizontal scrolling */
+    min-width: 0;
     width: 100%;
 }
 
 .segment-card.done { background-color: var(--tracker-bg-done); border-style: solid; }
 
 .segment-text {
-    font-size: 16px; /* Slightly smaller */
+    font-size: 16px;
     font-weight: bold;
     flex: 1 1 auto;
     padding-right: 8px;
     display: flex;
     align-items: center;
-    min-width: 0; /* KEY */
-    word-wrap: break-word; /* Allows long text/code to wrap downwards safely */
+    min-width: 0;
+    word-wrap: break-word;
     line-height: 1.25;
 }
 
 .segment-controls {
     display: flex;
     align-items: center;
-    gap: 8px; /* Tighter gap */
-    flex-shrink: 0; /* Ensures buttons never get squished */
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .segment-counter {
     font-size: 18px;
     font-weight: bold;
-    min-width: 40px; /* Tighter */
+    min-width: 40px;
     text-align: center;
 }
 
 .btn-circle {
-    width: 36px; /* Reduced from 45px to save space */
+    width: 36px;
     height: 36px;
     border-radius: 50%;
     font-size: 20px;
@@ -345,7 +467,7 @@ button:hover { filter: brightness(1.2); }
 
 .group-layout { 
     display: flex; 
-    gap: 6px; /* Reduced gap */
+    gap: 6px; 
     align-items: center; 
     min-width: 0;
     width: 100%;
@@ -357,7 +479,7 @@ button:hover { filter: brightness(1.2); }
     flex-direction: column; 
     gap: 6px; 
     position: relative;
-    padding-right: 14px; /* Tighter edge */
+    padding-right: 14px;
     padding-top: 2px; 
     padding-bottom: 2px;
     min-width: 0;
@@ -366,7 +488,7 @@ button:hover { filter: brightness(1.2); }
 .group-segments::after {
     content: '';
     position: absolute;
-    right: 2px; /* Tighter */
+    right: 2px;
     top: 0; 
     bottom: 0; 
     width: 10px;
@@ -387,7 +509,7 @@ button:hover { filter: brightness(1.2); }
 }
 
 .bracket-btn {
-    width: 28px !important; /* Scaled down */
+    width: 28px !important;
     height: 28px !important;
     font-size: 16px !important;
 }

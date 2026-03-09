@@ -9,36 +9,61 @@
 <body>
 
 <div id="app">
+    <!-- Home View -->
     <div id="home-view" class="view active">
-        <div class="header-row" style="margin-bottom: 5px;">
-            <h2 style="font-size: 28px;">New Project</h2>
-            <div style="display: flex; gap: 15px; align-items: center;">
-                <span class="import-link" onclick="openPasteImportModal()">📋 paste</span>
-                <label for="import-file" class="import-link">📁 file</label>
-                <input type="file" id="import-file" style="display:none" accept=".txt" onchange="importProjectFile(event)">
-                <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn" title="Switch theme">🌙</button>
-            </div>
+        <div class="header-row" style="margin-bottom: 15px;">
+            <a href="https://github.com/DiemMasTer/WEB-Crochet-Tracker/tree/main" target="_blank" class="docs-link">📖 Docs</a>
+            <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn" title="Switch theme">🌙</button>
+        </div>
+
+        <button class="long-btn" onclick="showView('add-project-view')">+ Add/Import a project</button>
+        
+        <div style="text-align: center; margin-top: 15px;">
+            <span style="font-size: 13px; color: var(--text-muted); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">My Projects (Tap to Edit & Track)</span>
+        </div>
+        
+        <div id="project-grid" class="project-grid"></div>
+    </div>
+
+    <!-- Add/Import View -->
+    <div id="add-project-view" class="view">
+        <div class="header-row" style="position: relative; justify-content: center; min-height: 40px; margin-bottom: 10px;">
+            <button onclick="showView('home-view')" style="position: absolute; left: 0;">← Back</button>
+            <h2 style="font-size: 20px; margin: 0;">Add / Import</h2>
+        </div>
+
+        <div class="import-row">
+            <label for="import-file">📁 Import from .txt</label>
+            <input type="file" id="import-file" style="display:none" accept=".txt" onchange="importProjectFile(event)">
+            <button onclick="openPasteImportModal()">📋 Paste data</button>
+        </div>
+
+        <div style="text-align: center; margin: 15px 0;">
+            <span style="font-size: 13px; color: var(--text-muted); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">OR CREATE ONE</span>
         </div>
 
         <div class="form-group">
             <input type="text" id="new-proj-name" placeholder="Project Name">
+        </div>
+
+        <div class="form-group">
+            <label>Photos (Max 3):</label>
+            <div class="photo-grid" id="new-photo-grid"></div>
+        </div>
+        
+        <div class="form-group">
             <input type="text" id="new-proj-notes" placeholder="Notes (optional)">
         </div>
         
         <div class="form-group">
             <div class="color-toolbar" id="new-color-toolbar"></div>
-            <textarea id="new-proj-pattern" placeholder="Paste pattern here...&#10;<lblu>Head</lblu>&#10;Row 1-3: <w>6sc</w> [6]&#10;R2: ((1 sc, inc, 1 sc)*7)*7 #my note here"></textarea>
+            <textarea id="new-proj-pattern" placeholder="Paste pattern here...&#10;<lblu>Head</lblu>&#10;Row 1-3: <w>6sc</w> [6]"></textarea>
         </div>
         
-        <button onclick="createProject()">Save Project</button>
-        
-        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 15px;">
-            <h3>My Projects</h3>
-            <span style="font-size: 13px; color: var(--btn-hover); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">Tap to Edit & Track</span>
-        </div>
-        <div id="project-list"></div>
+        <button onclick="createProject()" style="background-color: var(--btn-hover); color: var(--bg-color); font-size: 18px; padding: 14px;">Save & Track</button>
     </div>
 
+    <!-- Edit Project View -->
     <div id="project-view" class="view">
         <div class="header-row" style="position: relative; justify-content: center; min-height: 40px; margin-bottom: 10px;">
             <button onclick="showView('home-view')" style="position: absolute; left: 0;">← Back</button>
@@ -48,6 +73,11 @@
         <div class="form-group">
             <label>Project Name:</label>
             <input type="text" id="edit-proj-name" placeholder="Project Name">
+        </div>
+
+        <div class="form-group">
+            <label>Photos (Max 3):</label>
+            <div class="photo-grid" id="edit-photo-grid"></div>
         </div>
         
         <div class="form-group">
@@ -61,7 +91,7 @@
             <textarea id="edit-proj-pattern"></textarea>
         </div>
         
-        <button onclick="updateProject()">Update Project</button>
+        <button onclick="updateProject()">Update</button>
 
         <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px;">
             <h3>Rows</h3>
@@ -71,13 +101,13 @@
         <div id="row-list"></div>
     </div>
 
+    <!-- Tracker View -->
     <div id="tracker-view" class="view">
         <div class="header-row" style="position: relative; justify-content: center; min-height: 35px; margin-bottom: 10px;">
             <button onclick="openProject(currentProjectId)" style="position: absolute; left: 0;">← Back</button>
             <h2 style="font-size: 20px; margin: 0;">Tracker</h2>
         </div>
 
-        <!-- Inline styles removed here to allow compact mobile CSS -->
         <div id="track-block-note" class="block-note-badge"></div>
 
         <div class="header-row" style="justify-content: center; gap: 20px; margin-bottom: 10px;">
@@ -89,7 +119,6 @@
         <div class="pattern-display" id="track-pattern-text" ondblclick="openRowEditModal(currentRowIndex)" title="Double-tap to edit"></div>
         <div id="segments-container"></div>
 
-        <!-- Row Notes Area -->
         <div class="tracker-notes-section">
             <div class="tracker-notes-header">
                 <span>Notes:</span>
@@ -102,13 +131,31 @@
     </div>
 </div>
 
+<!-- Hidden File Input for Image Upload -->
+<input type="file" id="hidden-photo-input" accept="image/*" style="display:none" onchange="handlePhotoSelected(event)">
+
 <!-- Modals -->
+<div id="image-modal" class="modal-overlay" onclick="closeModal('image-modal')">
+    <img id="enlarged-image" src="" style="max-width:90%; max-height:90%; object-fit:contain; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.8);" onclick="event.stopPropagation()">
+    <button onclick="closeModal('image-modal')" style="position:absolute; top:20px; right:20px; background:var(--card-bg); color:white; border-radius:50%; width:40px; height:40px; font-size:20px;">✕</button>
+</div>
+
 <div id="delete-modal" class="modal-overlay">
     <div class="modal-content">
         <p style="font-size: 18px; margin-bottom: 10px;">Are you sure you want to delete <strong id="delete-proj-name" style="color: var(--btn-highlight);"></strong>?</p>
         <div class="modal-buttons">
-            <button id="btn-confirm-delete" style="background-color: var(--btn-highlight); flex: 1;">Yes, delete.</button>
+            <button id="btn-confirm-delete" style="background-color: var(--btn-highlight); flex: 1;">Yes, delete</button>
             <button onclick="closeModal('delete-modal')" style="flex: 1; background-color: var(--accent);">No</button>
+        </div>
+    </div>
+</div>
+
+<div id="photo-delete-modal" class="modal-overlay">
+    <div class="modal-content">
+        <p style="font-size: 18px; margin-bottom: 10px;">Delete this photo?</p>
+        <div class="modal-buttons">
+            <button id="btn-confirm-photo-delete" style="background-color: var(--btn-highlight); flex: 1;">Delete</button>
+            <button onclick="closeModal('photo-delete-modal')" style="flex: 1; background-color: var(--accent);">Cancel</button>
         </div>
     </div>
 </div>
@@ -116,7 +163,7 @@
 <div id="export-modal" class="modal-overlay">
     <div class="modal-content">
         <h3 style="margin-bottom: 5px;">Export Project</h3>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 5px;">Download the file, or copy the raw data if your app blocks downloads.</p>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 5px;">Download the file, or copy the raw data.</p>
         <textarea id="export-textarea" class="raw-data-textarea" readonly></textarea>
         <div class="modal-buttons">
             <button onclick="downloadExportData()" style="flex: 1; background-color: var(--btn-hover); color: var(--bg-color);">⬇ Download</button>
@@ -129,7 +176,7 @@
 <div id="paste-import-modal" class="modal-overlay">
     <div class="modal-content">
         <h3 style="margin-bottom: 5px;">Paste Import</h3>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 5px;">Paste the raw text you copied previously to import your project.</p>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 5px;">Paste the raw text you copied previously.</p>
         <textarea id="paste-import-textarea" class="raw-data-textarea" placeholder='{"name": "My Pattern", "patternText": ...}'></textarea>
         <div class="modal-buttons">
             <button onclick="confirmPasteImport()" style="flex: 1; background-color: var(--btn-hover); color: var(--bg-color);">📥 Import</button>
