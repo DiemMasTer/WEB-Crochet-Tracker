@@ -1,6 +1,7 @@
 
 
-Welcome to the WEB Crochet Tracker.
+Welcome to TrackAmi, your
+Amigurumi WEB based tracker! (And counter) 
 
 This is a simple tool that shouldn't raise safety concerns as it saves progress in YOUR browser
 
