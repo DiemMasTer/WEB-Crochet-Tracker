@@ -98,7 +98,6 @@ function forceReparseAllProjects() {
         if (proj.patternText) {
             let freshRows = processPatternIntoRows(proj.patternText);
             syncProjectProgress(proj.rows, freshRows);
-            // Overwrite old rows with the newly parsed rows
             proj.rows = freshRows;
             needsSave = true;
         }
@@ -112,7 +111,7 @@ window.onload = () => {
     renderColorToolbars();
     renderNodeColorPicker();
     initDB().then(() => {
-        forceReparseAllProjects(); // Re-parses everything with the new fixes
+        forceReparseAllProjects(); // Re-parses everything with the new strict logic
         renderProjectList();
     });
 };
@@ -250,19 +249,14 @@ const STITCH_MAP = {
   'ta': 'hdc dec', 'tm': 'hdc dec3', 'fa': 'dc dec', 'fm': 'dc dec3'
 };
 
-const ROW_PREFIXES = [
-  'Rounds', 'Round', 'Rnds', 'Rnd', 'Rows', 'Row',
-  'Vueltas', 'Vuelta', 'Hileras', 'Hilera',
-  'Runden', 'Runde', 'Reihen', 'Reihe',
-  'Giri', 'Giro', 'Righe', 'Riga',
-  'Voltas', 'Volta', 'Carreiras', 'Carreira', 'Carr',
-  'Rd', 'R', 'V', 'H', 'C', 'G', '第', '圈', '行'
-].join('|');
+const ROW_PREFIX_STR = 'Rounds|Round|Rnds|Rnd|Rows|Row|Vueltas|Vuelta|Hileras|Hilera|Runden|Runde|Reihen|Reihe|Giri|Giro|Righe|Riga|Voltas|Volta|Carreiras|Carreira|Carr|Rd|R|V|H|C|G';
+
+const STRICT_ROW_REGEX = new RegExp(`^\\s*(?:(?:${ROW_PREFIX_STR})(?:\\s*\\d+(?:\\s*[-–—~]\\s*\\d+)?)?|第\\s*\\d+(?:\\s*[-–—~]\\s*\\d+)?\\s*[圈行]|\\d+(?:\\s*[-–—~]\\s*\\d+)?)\\s*[:.]`, 'i');
 
 const PREFIX_NORM_MAP = {
   'rounds':'Round', 'rnds':'Rnd', 'rows':'Row', 'r':'Row',
   'vueltas':'Vuelta', 'hileras':'Hilera', 'v':'Vuelta', 'h':'Hilera',
-  'runden':'Runde', 'reihen':'Reihe', 'rd':'Runde',
+  'runden':'Runde', 'reihen':'Reihe', 'rd':'Rnd',
   'giri':'Giro', 'righe':'Riga', 'g':'Giro',
   'voltas':'Volta', 'carreiras':'Carreira', 'carr':'Carreira', 'c':'Carreira',
   '第': 'Round', '圈': 'Round', '行': 'Row'
@@ -293,7 +287,7 @@ function getStitchOutputValue(internalStitchToken) {
 function getSequenceOutput(str) {
     let subParts = splitTopLevel(str);
     let sum = 0;
-    const tRegex = new RegExp(`^(?:(?<c1>\\d+)\\s*)?(?:(?<mod>${dynamicModifiers})\\s*)?(?:(?<c2>\\d+)\\s*)?(?<st>[a-z][a-z0-9\\s\\-]*)$`, 'i');
+    const tRegex = new RegExp(`^(?:(?<c1>\\d+)\\s*)?(?:(?<mod>${dynamicModifiers})\\s*)?(?:(?<c2>\\d+)\\s*)?(?<st>[a-z][a-zA-Z0-9\\s\\-]*?)(?:\\s+(?<c3>\\d+))?$`, 'i');
     
     for (let sp of subParts) {
         sp = sp.trim();
@@ -314,7 +308,7 @@ function getSequenceOutput(str) {
         } else {
             let tm = target.match(tRegex);
             if (tm && tm.groups) {
-                let c = parseInt(tm.groups.c1 || tm.groups.c2 || 1, 10);
+                let c = parseInt(tm.groups.c1 || tm.groups.c2 || tm.groups.c3 || 1, 10);
                 let stRaw = tm.groups.st.trim().toLowerCase();
                 let stNorm = STITCH_MAP[stRaw] || stRaw;
                 sum += c * getStitchOutputValue(stNorm) * multi;
@@ -342,7 +336,7 @@ function parseInEachSt(input) {
   else if (cleanInst.startsWith('[') && cleanInst.endsWith(']')) cleanInst = cleanInst.slice(1, -1);
   const parts = splitTopLevel(cleanInst);
   const tokens = [];
-  const tokenRegex = new RegExp(`^(?:(?<count1>\\d+)\\s*)?(?:(?<modifier>${dynamicModifiers})\\s*)?(?:(?<count2>\\d+)\\s*)?(?<stitch>[a-z][a-z0-9\\s\\-]*)$`, 'i');
+  const tokenRegex = new RegExp(`^(?:(?<count1>\\d+)\\s*)?(?:(?<modifier>${dynamicModifiers})\\s*)?(?:(?<count2>\\d+)\\s*)?(?<stitch>[a-z][a-zA-Z0-9\\s\\-]*?)(?:\\s+(?<count3>\\d+))?$`, 'i');
   let sequenceSum = 0;
   for (let part of parts) {
       part = part.trim();
@@ -363,7 +357,7 @@ function parseInEachSt(input) {
       } else {
           let tMatch = part.match(tokenRegex);
           if (!tMatch || !tMatch.groups) return null;
-          let count = parseInt(tMatch.groups.count1 || tMatch.groups.count2 || 1, 10);
+          let count = parseInt(tMatch.groups.count1 || tMatch.groups.count2 || tMatch.groups.count3 || 1, 10);
           let rawStitch = tMatch.groups.stitch.trim();
           let rawMod = tMatch.groups.modifier ? tMatch.groups.modifier.trim() : null;
           let normStitch = STITCH_MAP[rawStitch.toLowerCase()] || rawStitch.toLowerCase();
@@ -402,7 +396,7 @@ function normalizeMultipliers(text) {
     let res = text;
     res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(\\d+)\\s*(?:${MULTIPLIER_WORDS})\\b`, 'gi'), '* $1');
     res = res.replace(new RegExp(`(?:\\b(?:${REPEAT_WORDS})\\s+)?\\b(?:${MULTIPLIER_WORDS})\\s*(\\d+)\\b`, 'gi'), '* $1');
-    res = res.replace(new RegExp(`\\b(?:${REPEAT_WORDS})\\s+(\\d+)\\s*x\\b`, 'gi'), '* $1');
+    res = res.replace(new RegExp(`\\b(?:${REPEAT_WORDS})\\s+(\\d+)(?:\\s*x)?\\b`, 'gi'), '* $1');
     return res;
 }
 
@@ -575,7 +569,7 @@ function applyNodeColor(colorTag) {
         let lines = proj.patternText.split('\n'); let sourceIdx = row.sourceLineIndex;
         if (sourceIdx !== undefined && sourceIdx >= 0 && sourceIdx < lines.length) {
             let line = lines[sourceIdx];
-            let prefixMatch = line.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+)[\\s.:-]*`, 'i'));
+            let prefixMatch = line.match(STRICT_ROW_REGEX);
             let prefix = prefixMatch ? prefixMatch[0] : "";
             let hashIdx = line.indexOf('#'); let suffix = hashIdx !== -1 ? " " + line.substring(hashIdx) : "";
             lines[sourceIdx] = prefix + serializeNodesToText(row.nodes) + (row.rowTotalStr ? " " + row.rowTotalStr : "") + suffix;
@@ -590,9 +584,11 @@ function applyNodeColor(colorTag) {
         let lines = proj.patternText.split('\n'); let orig = lines[row.sourceLineIndex];
         let hashIdx = orig.indexOf('#'); let noteStr = hashIdx !== -1 ? orig.substring(hashIdx) : "";
         let lineNoNote = hashIdx !== -1 ? orig.substring(0, hashIdx) : orig;
-        let prefMatch = lineNoNote.match(new RegExp(`^\\s*(?:(?:${ROW_PREFIXES})?\\s*\\d+\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*\\d+|(?:${ROW_PREFIXES})\\s*\\d*|\\d+|第?\\s*\\d+\\s*[圈行])[\\s.:-]*`, 'i'));
+        
+        let prefMatch = lineNoNote.match(STRICT_ROW_REGEX);
         let prefixStr = prefMatch ? prefMatch[0] : "";
         let instPart = lineNoNote.substring(prefixStr.length).trimRight();
+        
         let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
         let totMatch = instPart.match(totalRegex); let totStr = totMatch ? " " + totMatch[1] : "";
         let coreInst = instPart.replace(totalRegex, '').trim();
@@ -657,20 +653,43 @@ function parsePart(str, inheritedColor = null) {
     str = str.trim(); let color = inheritedColor;
     let colorMatch = str.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
     if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
-    let groupMatch = str.match(/^[\(\[]([\s\S]*)[\)\]]\s*(?:\*|x|X)?\s*(\d+)$/i) || str.match(/^(\d+)\s*(?:\*|x|X)?\s*[\(\[]([\s\S]*)[\)\]]$/i);
-    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[]/)) { groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; } 
+    
+    let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X|times)?\s*(\d+)(?:\s*(?:x|X|times))?$/i) || 
+                     str.match(/^(\d+)(?:\s*(?:x|X|times))?\s*(?:\*|x|X|times)?\s*[\(\[\{]([\s\S]*)[\)\]\}]$/i);
+                     
+    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[\{]/)) { 
+        groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; 
+    } 
     if (groupMatch) return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
-    let groupMatchNoMulti = str.match(/^[\(\[]([\s\S]*)[\)\]]$/i);
+    
+    let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
     if (groupMatchNoMulti) return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
+    
     let max = 1, text = str;
-    let multiMatch = text.match(/(.*)\s*(?:\*|x|X)\s*(\d+)$/i);
-    if (multiMatch) { max = parseInt(multiMatch[2], 10); text = multiMatch[1].trim(); }
-    else {
-        let startMatch = text.match(/^(\d+)\s*(.*)$/);
-        if (startMatch) { max = parseInt(startMatch[1], 10); text = startMatch[2].trim() || "st"; }
-        else {
-            let endMatch = text.match(/^(.*?)\s+(\d+)$/) || text.match(/^(.*?[a-zA-Z])(\d+)$/);
-            if (endMatch) { max = parseInt(endMatch[2], 10); text = endMatch[1].trim(); }
+    let multiMatch = text.match(/(.*)\s*(?:\*|x|X|times)\s*(\d+)$/i);
+    if (multiMatch && multiMatch[1].trim() !== '') { 
+        max = parseInt(multiMatch[2], 10); 
+        text = multiMatch[1].trim(); 
+    } else {
+        let modCountMatch = text.match(new RegExp(`^((?:${dynamicModifiers})\\s+)?(\\d+)\\s*(.*)$`, 'i'));
+        if (modCountMatch) {
+            max = parseInt(modCountMatch[2], 10);
+            let modStr = modCountMatch[1] ? modCountMatch[1].trim() + ' ' : '';
+            let remStr = modCountMatch[3].trim();
+            text = modStr + remStr;
+            if (remStr === '') text = text + "st";
+        } else {
+            let endMatchX = text.match(/^(.+?)\s+(\d+)\s*x$/i);
+            if (endMatchX) {
+                max = parseInt(endMatchX[2], 10);
+                text = endMatchX[1].trim();
+            } else {
+                let endMatch = text.match(/^(.*?)\s+(\d+)$/) || text.match(/^(.*?[a-zA-Z])(\d+)$/);
+                if (endMatch) { 
+                    max = parseInt(endMatch[2], 10); 
+                    text = endMatch[1].trim(); 
+                }
+            }
         }
     }
     return { type: 'step', max: max, current: 0, text: text, color: color };
@@ -680,44 +699,54 @@ function parseSequence(str, inheritedColor = null) { return splitTopLevel(str).m
 
 function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n'); let expandedLines = [];
-    const rangeRegex = new RegExp(`^\\s*(${ROW_PREFIXES})?\\s*(\\d+)\\s*(?:[-–—~]|\\bto\\b)\\s*(?:${ROW_PREFIXES})?\\s*(\\d+)[\\s.:-]+(.+)$`, 'i');
+    
+    const rangeExpanderRegex = new RegExp(`^(\\s*(?:(?:${ROW_PREFIX_STR})\\s*|第\\s*)?)(\\d+)(\\s*[-–—~]\\s*(?:(?:${ROW_PREFIX_STR})\\s*|第\\s*)?)(\\d+)(\\s*(?:[圈行])?\\s*[:.])(.*)$`, 'i');
     
     rawLines.forEach((line, idx) => {
         if (line.trim().length === 0) return;
-        let match = line.match(rangeRegex);
+        let match = line.match(rangeExpanderRegex);
         if (match) {
-            let prefixStr = match[1] || 'Row'; let lowerPrefix = prefixStr.toLowerCase();
-            prefixStr = PREFIX_NORM_MAP[lowerPrefix] || (prefixStr.charAt(0).toUpperCase() + prefixStr.slice(1).toLowerCase());
-            let start = parseInt(match[2], 10), end = parseInt(match[3], 10);
-            if (start <= end) for (let i = start; i <= end; i++) expandedLines.push({ text: `${prefixStr} ${i}: ${match[4].trim()}`, sourceLineIndex: idx });
-            else for (let i = start; i >= end; i--) expandedLines.push({ text: `${prefixStr} ${i}: ${match[4].trim()}`, sourceLineIndex: idx });
-        } else expandedLines.push({ text: line, sourceLineIndex: idx });
+            let start = parseInt(match[2], 10), end = parseInt(match[4], 10);
+            if (start <= end) {
+                for (let i = start; i <= end; i++) expandedLines.push({ text: `${match[1]}${i}${match[5]}${match[6]}`, sourceLineIndex: idx });
+            } else {
+                for (let i = start; i >= end; i--) expandedLines.push({ text: `${match[1]}${i}${match[5]}${match[6]}`, sourceLineIndex: idx });
+            }
+        } else {
+            expandedLines.push({ text: line, sourceLineIndex: idx });
+        }
     });
 
     let currentBlockNote = null, currentDisplayIndex = 0, finalRows = [];
+    
     expandedLines.forEach(item => {
         let line = item.text; let trimmedLine = line.trim(); let cleanLine = trimmedLine.replace(/<.*?>/g, '').trim();
-        let rowPrefixRegex = new RegExp(`^\\s*(${ROW_PREFIXES})(?:[\\s\\d.:-]|$)`, 'i');
-        if (!/\d/.test(cleanLine) && !rowPrefixRegex.test(cleanLine)) {
+
+        // STRICT Row rule applied here: MUST match valid prefix/number format AND strictly be followed by ":" or "."
+        if (!STRICT_ROW_REGEX.test(cleanLine)) {
             let displayNote = cleanLine; let noteColor = null;
             let colorMatch = trimmedLine.match(/^\s*<([a-zA-Z]+)>([\s\S]*?)<\/\1>\s*(?:#.*)?$/i);
             if (colorMatch) { noteColor = colorMatch[1]; displayNote = colorMatch[2].trim(); }
+            
             let hashIdx = displayNote.indexOf('#'); if (hashIdx !== -1) displayNote = displayNote.substring(0, hashIdx).trim();
+            
             if (!currentBlockNote || displayNote !== currentBlockNote.text) {
                 currentBlockNote = { text: displayNote, color: noteColor, sourceLineIndex: item.sourceLineIndex }; currentDisplayIndex = 0;
             } else if (currentBlockNote && currentBlockNote.color !== noteColor) {
                 currentBlockNote.color = noteColor; currentBlockNote.sourceLineIndex = item.sourceLineIndex;
             }
-            return;
+            return; // Finished parsing as block note
         }
 
+        // It is a valid row!
         currentDisplayIndex++;
         let rowNote = ""; let hashIdx = line.indexOf('#');
         if (hashIdx !== -1) { rowNote = line.substring(hashIdx + 1).trim(); line = line.substring(0, hashIdx).trim(); }
-        let pm = line.match(new RegExp(`^\\s*(第\\s*\\d+\\s*[圈行]|${ROW_PREFIXES})`, 'i'));
-        let rowPrefix = pm ? pm[1] : 'Row'; let lowerPrefix = rowPrefix.toLowerCase();
-        rowPrefix = PREFIX_NORM_MAP[lowerPrefix] || (rowPrefix.charAt(0).toUpperCase() + rowPrefix.slice(1).toLowerCase());
-        let instructionPart = line.replace(new RegExp(`^\\s*(?:第?\\s*\\d+\\s*[圈行][\\s.:-]*|(?:${ROW_PREFIXES})\\s*\\d*[\\s.:-]*|\\d+[\\s.:-]+)`, 'i'), '');
+        
+        // Strip out the matched prefix using the exact same STRICT Regex
+        let rowPrefixMatch = line.match(STRICT_ROW_REGEX);
+        let matchedPrefixRaw = rowPrefixMatch[0];
+        let instructionPart = line.substring(matchedPrefixRaw.length).trim();
         cleanLine = normalizeMultipliers(instructionPart);
         
         let totalRegex = /\s*([\[\(]\s*\d+\s*(?:sts|sc|hdc|dc|tr|pt|ponto|m|maglia|针)?\s*[\]\)])\s*$/i;
@@ -737,6 +766,15 @@ function processPatternIntoRows(patternText) {
         }
         
         cleanLine = distributeColorTags(cleanLine);
+        
+        // Build prefix logic purely for UI label
+        let rowPrefix = 'Row';
+        let wordMatch = matchedPrefixRaw.match(new RegExp(`(${ROW_PREFIX_STR}|第|圈|行)`, 'i'));
+        if (wordMatch) {
+            let lower = wordMatch[1].toLowerCase();
+            rowPrefix = PREFIX_NORM_MAP[lower] || (wordMatch[1].charAt(0).toUpperCase() + wordMatch[1].slice(1).toLowerCase());
+        }
+
         finalRows.push({
             originalText: line, instructionText: instructionPart, nodes: parseSequence(cleanLine, rowColor),
             blockNote: currentBlockNote ? currentBlockNote.text : null, blockNoteColor: currentBlockNote ? currentBlockNote.color : null,
@@ -1126,4 +1164,3 @@ function refreshTrackerUI() {
     if(noteInput) { noteInput.value = row.rowNote || ""; noteInput.style.display = isNoteVisible ? 'block' : 'none'; }
     document.getElementById('segments-container').innerHTML = renderNodesHtml(row.nodes);
 }
-
