@@ -9,8 +9,9 @@ It was written with the aid of AI and a lot of planning and elbow grease.
 
 Tested on Brave (Chromium Browser) and Firefox.
 
-# licence 
+# license 
 You can do anything you want with this code, but you cannot use it/modify it for commercial purposes, you can't incorporate the code in any for profit project/product.
+for more, check the file in the repo.
 
 
 # features, overview 
