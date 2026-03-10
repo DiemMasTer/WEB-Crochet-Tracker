@@ -251,5 +251,26 @@ R1: 5sc
 *   **Row/Round Prefixes:** `R`,第 (Number/Prefix), 圈 (Round), and 行 (Row)
 
 
+# Q&A
 
+## More themes?
+I'm considering adding a light mode.
+
+## More features?
+Probably not.
+I don't want to make this app too bulky, it is already way more complex than I first envisioned. It should be enough for most use cases.
+
+## More languages?
+Maybe. I don't know if many (or any) users will use this app so let's keep it simple. I'm open to suggestions and corrections.
+
+## Android, iOS?
+No. I wanted to make something accessible from any device and easy to maintain so a web app seemed like the obvious choice.
+
+## "I'm from Ribblr ltd. ’or any for profit business’, I wish..."
+No. You can't use the code (or parts of it).
+Just pay an actual dev to do the heavy lifting.
+
+## Found a bug? Wanna contribute? Wanna donate?
+Sure, you can open a issue, make a pull req.
+You can also [buy me a coffee](https://www.buymeacoffee.com/TrackAmi) if you wish to do so.
 
