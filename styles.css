@@ -11,6 +11,7 @@
     --btn-highlight: #f72585;
     --btn-highlight-rgb: 247, 37, 133;
     --note-bg: #4d5059;
+    --note-inline: #8be9fd;
 }
 
 [data-theme="dark"] {
@@ -25,6 +26,7 @@
     --btn-highlight: #d0d0d0;
     --btn-highlight-rgb: 208, 208, 208;
     --note-bg: #3a3a3a;
+    --note-inline: #a0c0d0;
 }
 
 * { box-sizing: border-box; }
@@ -172,7 +174,7 @@ button:hover { filter: brightness(1.2); }
     overflow: hidden;
     border: 1px solid var(--accent);
     transition: 0.2s;
-    aspect-ratio: 0.8; /* Keeps a nice vertical card shape */
+    aspect-ratio: 0.8;
 }
 
 .project-tassel:hover { filter: brightness(1.1); transform: translateY(-2px); }
@@ -191,8 +193,8 @@ button:hover { filter: brightness(1.2); }
 .tassel-img {
     flex-grow: 1;
     background-color: var(--bg-color);
-    background-size: contain; /* Changed from 'cover' to 'contain' */
-    background-repeat: no-repeat; /* Added to prevent tiling */
+    background-size: contain;
+    background-repeat: no-repeat;
     background-position: center;
     position: relative;
     border-bottom: 1px solid var(--accent);
@@ -427,6 +429,17 @@ button:hover { filter: brightness(1.2); }
     min-width: 0;
     word-wrap: break-word;
     line-height: 1.25;
+}
+
+/* NEW Inline Note Style */
+.step-note {
+    font-size: 13.5px;
+    color: var(--note-inline);
+    font-weight: normal;
+    margin-left: 6px;
+    font-style: italic;
+    opacity: 0.9;
+    white-space: normal;
 }
 
 .segment-controls {

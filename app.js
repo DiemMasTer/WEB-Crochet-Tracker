@@ -1,5 +1,3 @@
-// --- START OF FILE app (11).js ---
-
 // --- Theme Management ---
 function loadTheme() {
     let saved = localStorage.getItem('crochetTheme') || 'midnight';
@@ -320,6 +318,117 @@ function getSequenceOutput(str) {
     return sum;
 }
 
+function splitTopLevel(str) {
+    let result = [], current = '', depth = 0;
+    for (let i = 0; i < str.length; i++) {
+        let char = str[i];
+        if (char === '(' || char === '[' || char === '{' || char === '<') depth++;
+        else if (char === ')' || char === ']' || char === '}' || char === '>') depth = Math.max(0, depth - 1);
+        if (char === ',' && depth === 0) { result.push(current.trim()); current = ''; } else { current += char; }
+    }
+    if (current) result.push(current.trim());
+    return result;
+}
+
+function distributeColorTags(str) {
+    return str.replace(/<([a-zA-Z]+)>([\s\S]*?)<\/\1>/gi, function(match, color, content) {
+        return splitTopLevel(content).map(p => `<${color}>${p.trim()}</${color}>`).join(', ');
+    });
+}
+
+function extractStepNote(str) {
+    // 1. First try // at the end
+    let slashMatch = str.match(/(.*?)\s*\/\/\s*(.*)$/);
+    if (slashMatch) return { cleanStr: slashMatch[1].trim(), note: slashMatch[2].trim() };
+    
+    // 2. Matches a quote block: double (""), single (''), or smart/curly ([“”]).
+    //    It ensures the quote is either at the VERY END, or followed ONLY by a multiplier like " * 3".
+    let quoteRegex = /^(.*?)\s*(?:"([^"]+)"|'([^']+)'|[“”]([^“”]+)[“”])\s*((?:\*|x|X|times)\s*\d+\s*)?$/i;
+    let quoteMatch = str.match(quoteRegex);
+    
+    if (quoteMatch) {
+        // Find which capturing group grabbed the text inside the quotes
+        let note = quoteMatch[2] || quoteMatch[3] || quoteMatch[4];
+        let before = quoteMatch[1] || "";
+        let after = quoteMatch[5] || "";
+        
+        // Reconstruct the clean string, omitting the quote block completely
+        let cleanStr = before;
+        if (after) {
+            cleanStr = cleanStr ? (cleanStr + " " + after.trim()) : after.trim();
+        }
+        
+        return { cleanStr: cleanStr.trim(), note: note.trim() };
+    }
+    
+    return { cleanStr: str, note: null };
+}
+
+function parsePart(str, inheritedColor = null) {
+    str = str.trim(); let color = inheritedColor;
+    let colorMatch = str.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
+    if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
+    
+    // Extract the inline note so it doesn't break mathematical regexes
+    let extracted = extractStepNote(str);
+    str = extracted.cleanStr;
+    let stepNote = extracted.note;
+    
+    let braceClusterMatch = str.match(/^\{([\s\S]*?)\}(?:\s*(?:\*|x|X|times)?\s*(\d+))?$/i);
+    if (!braceClusterMatch) {
+        let altBrace = str.match(/^(\d+)\s*(?:\*|x|X|times)?\s*\{([\s\S]*?)\}$/i);
+        if (altBrace) braceClusterMatch = [altBrace[0], altBrace[2], altBrace[1]];
+    }
+    
+    if (braceClusterMatch) {
+        let inner = braceClusterMatch[1].trim();
+        let outerMulti = braceClusterMatch[2] ? parseInt(braceClusterMatch[2], 10) : 1;
+        return { type: 'step', max: outerMulti, current: 0, text: `{${inner}}`, color: color, stepNote: stepNote };
+    }
+    
+    let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X|times)?\s*(\d+)(?:\s*(?:x|X|times))?$/i) || 
+                     str.match(/^(\d+)(?:\s*(?:x|X|times))?\s*(?:\*|x|X|times)?\s*[\(\[\{]([\s\S]*)[\)\]\}]$/i);
+                     
+    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[\{]/)) { 
+        groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; 
+    } 
+    if (groupMatch) return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {}, stepNote: stepNote };
+    
+    let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
+    if (groupMatchNoMulti) return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {}, stepNote: stepNote };
+    
+    let max = 1, text = str;
+    let multiMatch = text.match(/(.*)\s*(?:\*|x|X|times)\s*(\d+)$/i);
+    if (multiMatch && multiMatch[1].trim() !== '') { 
+        max = parseInt(multiMatch[2], 10); 
+        text = multiMatch[1].trim(); 
+    } else {
+        let modCountMatch = text.match(new RegExp(`^((?:${dynamicModifiers})\\s+)?(\\d+)\\s*(.*)$`, 'i'));
+        if (modCountMatch) {
+            max = parseInt(modCountMatch[2], 10);
+            let modStr = modCountMatch[1] ? modCountMatch[1].trim() + ' ' : '';
+            let remStr = modCountMatch[3].trim();
+            text = modStr + remStr;
+            if (remStr === '') text = text + "st";
+        } else {
+            let endMatchX = text.match(/^(.+?)\s+(\d+)\s*x$/i);
+            if (endMatchX) {
+                max = parseInt(endMatchX[2], 10);
+                text = endMatchX[1].trim();
+            } else {
+                let endMatch = text.match(/^(.*?)\s+(\d+)$/) || text.match(/^(.*?[a-zA-Z])(\d+)$/);
+                if (endMatch) { 
+                    max = parseInt(endMatch[2], 10); 
+                    text = endMatch[1].trim(); 
+                }
+            }
+        }
+    }
+    return { type: 'step', max: max, current: 0, text: text, color: color, stepNote: stepNote };
+}
+
+function parseSequence(str, inheritedColor = null) { return splitTopLevel(str).map(p => parsePart(p, inheritedColor)); }
+
 function parseInEachSt(input) {
   const line = input.trim().toLowerCase();
   const wrapperPatterns = [
@@ -340,9 +449,16 @@ function parseInEachSt(input) {
   const tokens = [];
   const tokenRegex = new RegExp(`^(?:(?<count1>\\d+)\\s*)?(?:(?<modifier>${dynamicModifiers})\\s*)?(?:(?<count2>\\d+)\\s*)?(?<stitch>[a-z][a-zA-Z0-9\\s\\-]*?)(?:\\s+(?<count3>\\d+))?$`, 'i');
   let sequenceSum = 0;
+  
   for (let part of parts) {
       part = part.trim();
       if (!part) continue;
+      
+      // Extract note before token validation!
+      let extracted = extractStepNote(part);
+      part = extracted.cleanStr;
+      let note = extracted.note;
+
       let cMatch = part.match(/^(\{[\s\S]*?\})(?:\s*(?:\*|x|X)?\s*(\d+))?$/i);
       if (cMatch && !cMatch[2]) {
           let altMatch = part.match(/^(\d+)\s*(?:\*|x|X)?\s*(\{[\s\S]*?\})$/i);
@@ -355,7 +471,7 @@ function parseInEachSt(input) {
           if (sum === 0) return null;
           sequenceSum += sum;
           let textOut = clusterMulti > 1 ? `${clusterText} * ${clusterMulti}` : clusterText;
-          tokens.push({ type: 'cluster', text: textOut });
+          tokens.push({ type: 'cluster', text: textOut, note: note });
       } else {
           let tMatch = part.match(tokenRegex);
           if (!tMatch || !tMatch.groups) return null;
@@ -364,29 +480,47 @@ function parseInEachSt(input) {
           let rawMod = tMatch.groups.modifier ? tMatch.groups.modifier.trim() : null;
           let normStitch = STITCH_MAP[rawStitch.toLowerCase()] || rawStitch.toLowerCase();
           sequenceSum += count * getStitchOutputValue(normStitch);
-          tokens.push({ type: 'stitch', count: count, originalModifier: rawMod, originalStitch: rawStitch });
+          tokens.push({ type: 'stitch', count: count, originalModifier: rawMod, originalStitch: rawStitch, note: note });
       }
   }
+  
   if (sequenceSum === 0 || totalNum % sequenceSum !== 0) return null; 
   const multiplier = totalNum / sequenceSum;
+  
+  // Apply math and append notes back
   if (multiplier === 1) {
       return tokens.map(t => {
-          if (t.type === 'cluster') return t.text;
-          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
-          return t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+          let out = '';
+          if (t.type === 'cluster') out = t.text;
+          else {
+              const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+              out = t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+          }
+          if (t.note) out += ` "${t.note}"`;
+          return out;
       }).join(', ');
   } else {
       if (tokens.length === 1) {
           let t = tokens[0];
-          if (t.type === 'cluster') return `${t.text} * ${multiplier}`;
-          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
-          if (t.count === 1) return `${multiplier} ${modPrefix}${t.originalStitch}`.trim();
-          else return `(${t.count} ${modPrefix}${t.originalStitch}) * ${multiplier}`;
+          let out = '';
+          if (t.type === 'cluster') out = `${t.text} * ${multiplier}`;
+          else {
+              const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+              if (t.count === 1) out = `${multiplier} ${modPrefix}${t.originalStitch}`.trim();
+              else out = `(${t.count} ${modPrefix}${t.originalStitch}) * ${multiplier}`;
+          }
+          if (t.note) out += ` "${t.note}"`;
+          return out;
       }
       const seqStr = tokens.map(t => {
-          if (t.type === 'cluster') return t.text;
-          const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
-          return t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+          let out = '';
+          if (t.type === 'cluster') out = t.text;
+          else {
+              const modPrefix = t.originalModifier ? `${t.originalModifier} ` : '';
+              out = t.count > 1 ? `${t.count} ${modPrefix}${t.originalStitch}` : `${modPrefix}${t.originalStitch}`.trim();
+          }
+          if (t.note) out += ` "${t.note}"`;
+          return out;
       }).join(', ');
       return `(${seqStr}) * ${multiplier}`;
   }
@@ -556,6 +690,9 @@ function serializeNodesToText(nodes) {
         let str = "";
         if (n.type === 'step') str = `${n.max} ${n.text}`;
         else if (n.type === 'group') str = `[ ${serializeNodesToText(n.nodes)} ] x ${n.max}`;
+        
+        if (n.stepNote) str += ` "${n.stepNote}"`; // Keeps note intact during edits
+        
         if (n.color) str = `<${n.color}>${str}</${n.color}>`;
         parts.push(str);
     }
@@ -632,92 +769,6 @@ function saveRowEdit() {
     if (editTa) editTa.value = proj.patternText;
     document.getElementById('tracker-view').classList.contains('active') ? refreshTrackerUI() : renderRowList(proj);
 }
-
-function splitTopLevel(str) {
-    let result = [], current = '', depth = 0;
-    for (let i = 0; i < str.length; i++) {
-        let char = str[i];
-        if (char === '(' || char === '[' || char === '{' || char === '<') depth++;
-        else if (char === ')' || char === ']' || char === '}' || char === '>') depth = Math.max(0, depth - 1);
-        if (char === ',' && depth === 0) { result.push(current.trim()); current = ''; } else { current += char; }
-    }
-    if (current) result.push(current.trim());
-    return result;
-}
-
-function distributeColorTags(str) {
-    return str.replace(/<([a-zA-Z]+)>([\s\S]*?)<\/\1>/gi, function(match, color, content) {
-        return splitTopLevel(content).map(p => `<${color}>${p.trim()}</${color}>`).join(', ');
-    });
-}
-
-function parsePart(str, inheritedColor = null) {
-    str = str.trim(); let color = inheritedColor;
-    let colorMatch = str.match(/^<([a-zA-Z]+)>([\s\S]*?)<\/\1>$/i);
-    if (colorMatch) { color = colorMatch[1]; str = colorMatch[2].trim(); }
-    
-    // --- Special preservation for {} clusters ---
-    // CHANGED: Use [\s\S]*? to allow matching commas inside the {}, making the entire `{...}` block one uniform step.
-    let braceClusterMatch = str.match(/^\{([\s\S]*?)\}(?:\s*(?:\*|x|X|times)?\s*(\d+))?$/i);
-    if (!braceClusterMatch) {
-        let altBrace = str.match(/^(\d+)\s*(?:\*|x|X|times)?\s*\{([\s\S]*?)\}$/i);
-        if (altBrace) braceClusterMatch = [altBrace[0], altBrace[2], altBrace[1]];
-    }
-    
-    if (braceClusterMatch) {
-        let inner = braceClusterMatch[1].trim();
-        let outerMulti = braceClusterMatch[2] ? parseInt(braceClusterMatch[2], 10) : 1;
-        
-        // CHANGED: We intentionally DO NOT parse inner strings for max extraction. 
-        // A curly braces block like {3sc} is treated as ONE step repeated outerMulti times.
-        // Example: `{3sc} * 30` -> text: "{3sc}", max: 30 (renders as {3sc} 0/30)
-        // Example: `{3sc, 1inc}` -> text: "{3sc, 1inc}", max: 1 (renders as {3sc, 1inc} 0/1)
-        return { type: 'step', max: outerMulti, current: 0, text: `{${inner}}`, color: color };
-    }
-    // --- END Special preservation ---
-    
-    let groupMatch = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]\s*(?:\*|x|X|times)?\s*(\d+)(?:\s*(?:x|X|times))?$/i) || 
-                     str.match(/^(\d+)(?:\s*(?:x|X|times))?\s*(?:\*|x|X|times)?\s*[\(\[\{]([\s\S]*)[\)\]\}]$/i);
-                     
-    if (groupMatch && groupMatch.length === 3 && !str.match(/^[\(\[\{]/)) { 
-        groupMatch = [groupMatch[0], groupMatch[2], groupMatch[1]]; 
-    } 
-    if (groupMatch) return { type: 'group', max: parseInt(groupMatch[2], 10), current: 1, nodes: parseSequence(groupMatch[1], color), history: {} };
-    
-    let groupMatchNoMulti = str.match(/^[\(\[\{]([\s\S]*)[\)\]\}]$/i);
-    if (groupMatchNoMulti) return { type: 'group', max: 1, current: 1, nodes: parseSequence(groupMatchNoMulti[1], color), history: {} };
-    
-    let max = 1, text = str;
-    let multiMatch = text.match(/(.*)\s*(?:\*|x|X|times)\s*(\d+)$/i);
-    if (multiMatch && multiMatch[1].trim() !== '') { 
-        max = parseInt(multiMatch[2], 10); 
-        text = multiMatch[1].trim(); 
-    } else {
-        let modCountMatch = text.match(new RegExp(`^((?:${dynamicModifiers})\\s+)?(\\d+)\\s*(.*)$`, 'i'));
-        if (modCountMatch) {
-            max = parseInt(modCountMatch[2], 10);
-            let modStr = modCountMatch[1] ? modCountMatch[1].trim() + ' ' : '';
-            let remStr = modCountMatch[3].trim();
-            text = modStr + remStr;
-            if (remStr === '') text = text + "st";
-        } else {
-            let endMatchX = text.match(/^(.+?)\s+(\d+)\s*x$/i);
-            if (endMatchX) {
-                max = parseInt(endMatchX[2], 10);
-                text = endMatchX[1].trim();
-            } else {
-                let endMatch = text.match(/^(.*?)\s+(\d+)$/) || text.match(/^(.*?[a-zA-Z])(\d+)$/);
-                if (endMatch) { 
-                    max = parseInt(endMatch[2], 10); 
-                    text = endMatch[1].trim(); 
-                }
-            }
-        }
-    }
-    return { type: 'step', max: max, current: 0, text: text, color: color };
-}
-
-function parseSequence(str, inheritedColor = null) { return splitTopLevel(str).map(p => parsePart(p, inheritedColor)); }
 
 function processPatternIntoRows(patternText) {
     let rawLines = patternText.split('\n'); let expandedLines = [];
@@ -1128,13 +1179,18 @@ function renderNodesHtml(nodes, pathPrefix = []) {
     let html = '';
     nodes.forEach((node, idx) => {
         let currentPath = [...pathPrefix, idx]; let pathStr = currentPath.join('-');
+        
+        // Generate note element if it exists
+        let noteHtml = node.stepNote ? `<span class="step-note">(${node.stepNote})</span>` : '';
+
         if (node.type === 'step') {
             let isDone = node.current === node.max; let actualColor = getColorCode(node.color);
             let borderColor = actualColor ? `border-left: 6px solid ${actualColor};` : '';
             let dotStyle = actualColor ? `background-color:${actualColor}; border: 1px solid white;` : `background-color:transparent; border: 2px dashed var(--text-muted);`;
             let colorDot = `<span onclick="openNodeColorPicker('${pathStr}', event)" style="display:inline-block; width:18px; height:18px; border-radius:50%; ${dotStyle} margin-right:10px; cursor:pointer; flex-shrink:0;" title="Change color"></span>`;
+            
             html += `<div class="segment-card ${isDone ? 'done' : ''}" style="${borderColor}">
-                        <div class="segment-text">${colorDot}${node.text}</div>
+                        <div class="segment-text">${colorDot}<span style="display:inline-block;">${node.text} ${noteHtml}</span></div>
                         <div class="segment-controls">
                             <button class="btn-circle" onclick="updateNode('${pathStr}', -1)">-</button>
                             <div class="segment-counter">${node.current}/${node.max}</div>
@@ -1144,8 +1200,12 @@ function renderNodesHtml(nodes, pathPrefix = []) {
         } else if (node.type === 'group') {
             let innerHtml = renderNodesHtml(node.nodes, currentPath); let innerDone = checkNodesDone(node.nodes);
             let groupPlusPulse = (innerDone && node.current < node.max) ? 'pulse' : '';
+            
+            // Allow groups to have notes floating above their inside elements
+            let groupNoteHtml = node.stepNote ? `<div class="step-note" style="margin-left:0; margin-bottom:4px; opacity:1;">(${node.stepNote})</div>` : '';
+
             html += `<div class="group-layout">
-                        <div class="group-segments">${innerHtml}</div>
+                        <div class="group-segments">${groupNoteHtml}${innerHtml}</div>
                         <div class="group-controls">
                             <button class="btn-circle bracket-btn" onclick="updateGroupNode('${pathStr}', -1)">-</button>
                             <div class="segment-counter bracket-counter">${node.current}/${node.max}</div>
