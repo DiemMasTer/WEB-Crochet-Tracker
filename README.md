@@ -15,6 +15,7 @@ for more, check the file in the repo.
 
 
 # features, overview 
+* New: add notes to stitches and sections 
 - **track** your projects, **count** your stitches
 - add up to 3 **photos** per project.
 - **write** the pattern or **paste** it
@@ -96,6 +97,15 @@ These work regardless of the language the pattern is written in.
 ```
 Section <- this is a section!
 R1: 5sc
+```
+* notes/ comments can now be added to stichss and sections:
+Inner notes syntax (also from tracker view):
+
+`"tat"`, `'tat'`,`“tat” or ”tat”`, `inc"tit"`, `inc "tit"` 
+Also in groups: `(sc "tat", inc"tit") `
+Also for sections:
+```
+head "note"
 ```
 
 
